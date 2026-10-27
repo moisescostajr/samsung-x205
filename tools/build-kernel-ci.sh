@@ -33,6 +33,28 @@ for root, _, files in os.walk('kernel'):
 # Fix mm/filemap.c non-prototype declaration
 sed -i 's/static void filemap_tracing_mark_end()/static void filemap_tracing_mark_end(void)/' kernel/mm/filemap.c 2>/dev/null || true
 
+# Fix relative TRACE_INCLUDE_PATH . in trace headers (sprd_dfs_trace.h etc.)
+python3 -c "
+import os
+
+for root, _, files in os.walk('kernel'):
+    for f in files:
+        if f.endswith('.h'):
+            p = os.path.join(root, f)
+            try:
+                with open(p, 'r', encoding='utf-8', errors='ignore') as fp:
+                    content = fp.read()
+                if '#define TRACE_INCLUDE_PATH .' in content:
+                    rel_dir = os.path.relpath(root, 'kernel')
+                    fixed = content.replace('#define TRACE_INCLUDE_PATH .', f'#define TRACE_INCLUDE_PATH ../../{rel_dir}')
+                    with open(p, 'w', encoding='utf-8') as fp:
+                        fp.write(fixed)
+                    print(f'Fixed trace path in {p} -> ../../{rel_dir}')
+            except Exception:
+                pass
+"
+echo 'ccflags-y += -I$(src)' >> kernel/drivers/devfreq/sprd/Makefile 2>/dev/null || true
+
 # Ensure KBUILD_CFLAGS silences GCC 11 warning-errors
 echo 'KBUILD_CFLAGS += -Wno-error -Wno-strict-prototypes -Wno-format-zero-length -Wno-pointer-sign -Wno-array-bounds' >> kernel/Makefile
 
