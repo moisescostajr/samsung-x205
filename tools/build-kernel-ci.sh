@@ -12,6 +12,30 @@ echo "=== 2. Applying Patches ==="
 sed -i 's/HOST_EXTRACFLAGS := -I\$(src)\/libfdt/HOST_EXTRACFLAGS := -I\$(src)\/libfdt -DNO_YAML/' kernel/scripts/dtc/Makefile
 sed -i 's/dtc-objs.*+=.*yamltree.o/# disabled yaml/' kernel/scripts/dtc/Makefile 2>/dev/null || true
 
+# Strip -Werror and variants from all Makefiles across kernel tree
+python3 -c "
+import os, re
+for root, _, files in os.walk('kernel'):
+    for f in files:
+        if f.startswith('Makefile') or f.startswith('Kbuild') or f.endswith('.mk'):
+            p = os.path.join(root, f)
+            try:
+                with open(p, 'r', encoding='utf-8', errors='ignore') as fp:
+                    content = fp.read()
+                new_c = re.sub(r'-Werror([a-zA-Z0-9_=-]+)?', '-Wno-error', content)
+                if new_c != content:
+                    with open(p, 'w', encoding='utf-8') as fp:
+                        fp.write(new_c)
+            except Exception:
+                pass
+"
+
+# Fix mm/filemap.c non-prototype declaration
+sed -i 's/static void filemap_tracing_mark_end()/static void filemap_tracing_mark_end(void)/' kernel/mm/filemap.c 2>/dev/null || true
+
+# Ensure KBUILD_CFLAGS silences GCC 11 warning-errors
+echo 'KBUILD_CFLAGS += -Wno-error -Wno-strict-prototypes -Wno-format-zero-length -Wno-pointer-sign -Wno-array-bounds' >> kernel/Makefile
+
 echo "=== 3. Configuring Kernel ==="
 cd kernel
 make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- sprd_sharkl5Pro_defconfig
@@ -22,20 +46,20 @@ scripts/config --enable CONFIG_IKCONFIG
 scripts/config --enable CONFIG_IKCONFIG_PROC
 
 echo "=== 4. Compiling Kernel Image ==="
-make -j"$(nproc)" ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- Image
+make -j"$(nproc)" ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- KCFLAGS="-Wno-error" Image
 cd ..
 
 echo "=== 5. Compiling Kernel Modules ==="
 KDIR="$(pwd)/kernel"
 mkdir -p boot-pack/modules
 
-make -C "$KDIR" M="$(pwd)/tools/pmicwdt" ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- modules 2>/dev/null || true
+make -C "$KDIR" M="$(pwd)/tools/pmicwdt" ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- KCFLAGS="-Wno-error" modules 2>/dev/null || true
 cp -f tools/pmicwdt/pmicwdt_off.ko boot-pack/modules/ 2>/dev/null || true
 
-make -C "$KDIR" M="$(pwd)/tools/agdspup" ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- modules 2>/dev/null || true
+make -C "$KDIR" M="$(pwd)/tools/agdspup" ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- KCFLAGS="-Wno-error" modules 2>/dev/null || true
 cp -f tools/agdspup/*.ko boot-pack/modules/ 2>/dev/null || true
 
-make -C "$KDIR" M="$(pwd)/tools/dmaheap" ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- modules 2>/dev/null || true
+make -C "$KDIR" M="$(pwd)/tools/dmaheap" ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- KCFLAGS="-Wno-error" modules 2>/dev/null || true
 cp -f tools/dmaheap/*.ko boot-pack/modules/ 2>/dev/null || true
 
 echo "=== 6. Building Ramdisk ==="
