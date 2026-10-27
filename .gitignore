@@ -7,3 +7,4 @@ stock/
 *.img
 *.zip
 *.log
+tools/busybox-arm64

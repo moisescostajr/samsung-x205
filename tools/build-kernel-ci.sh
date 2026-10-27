@@ -214,11 +214,13 @@ export PATH=/bin:/sbin:/usr/bin:/usr/sbin
 BUSYBOX=/bin/busybox
 trap '' HUP INT QUIT TSTP TTIN TTOU
 
+# Essential filesystems
 $BUSYBOX mkdir -p /proc /sys /dev /tmp /run /mnt/root /config /modules
-$BUSYBOX mount -t proc proc /proc
-$BUSYBOX mount -t sysfs sysfs /sys
-$BUSYBOX mount -t tmpfs tmpfs /dev
+$BUSYBOX mount -t proc proc /proc 2>/dev/null || true
+$BUSYBOX mount -t sysfs sysfs /sys 2>/dev/null || true
+$BUSYBOX mount -t tmpfs tmpfs /dev 2>/dev/null || true
 
+# Essential device nodes in /dev
 $BUSYBOX mknod -m 600 /dev/console c 5 1 2>/dev/null || true
 $BUSYBOX mknod -m 666 /dev/tty c 5 0 2>/dev/null || true
 $BUSYBOX mknod -m 666 /dev/tty0 c 4 0 2>/dev/null || true
@@ -228,22 +230,21 @@ $BUSYBOX mknod -m 666 /dev/zero c 1 5 2>/dev/null || true
 $BUSYBOX mknod -m 600 /dev/kmsg c 1 11 2>/dev/null || true
 $BUSYBOX mdev -s 2>/dev/null || true
 
-# Direct output to console (tablet display)
-exec </dev/console >/dev/console 2>&1
+log() {
+    echo "gta8-init: $*" > /dev/kmsg 2>/dev/null || true
+    echo "gta8-init: $*" > /dev/tty0 2>/dev/null || true
+    echo "gta8-init: $*" 2>/dev/null || true
+}
 
-echo ""
-echo "============================================================"
-echo "    Debian GNU/Linux 12 - Samsung Galaxy Tab A8 LTE (X205)   "
-echo "============================================================"
-echo "[*] Kernel booted successfully."
+log "=== Kernel booted successfully! Starting initramfs ==="
 
 # 1. Neutralize hardware watchdogs immediately
 echo "watchdog rstoff" > /proc/mdbg/at_cmd 2>/dev/null || true
-if [ -f /pmicwdt_off.ko ]; then
-    $BUSYBOX insmod /pmicwdt_off.ko 2>/dev/null && echo "[*] SC2730 PMIC watchdog neutralized." || true
-elif [ -f /modules/pmicwdt_off.ko ]; then
-    $BUSYBOX insmod /modules/pmicwdt_off.ko 2>/dev/null && echo "[*] SC2730 PMIC watchdog neutralized." || true
-fi
+for ko in /pmicwdt_off.ko /modules/pmicwdt_off.ko; do
+    if [ -f "$ko" ]; then
+        $BUSYBOX insmod "$ko" 2>/dev/null && log "SC2730 PMIC watchdog neutralized via $ko" && break
+    fi
+done
 
 for w in /sys/class/watchdog/watchdog*; do
     [ -e "$w/dev" ] || continue
@@ -264,7 +265,7 @@ while true; do
     $BUSYBOX sleep 4
 done' </dev/null >/dev/null 2>&1 &
 
-# 2. Setup USB ACM gadget
+# 2. Setup USB ACM gadget (optional, ignore errors)
 $BUSYBOX mount -t configfs none /config 2>/dev/null || true
 G=/config/usb_gadget/g1
 if [ -d /config/usb_gadget ]; then
@@ -277,10 +278,45 @@ if [ -d /config/usb_gadget ]; then
 fi
 $BUSYBOX mknod -m 600 /dev/ttyGS0 c 509 0 2>/dev/null || true
 
+# Function to perform switch_root into Debian
+do_switch() {
+    log "Preparing Debian rootfs on $1..."
+
+    # Ensure /bin/busybox and /bin/sh exist on target root!
+    $BUSYBOX mkdir -p /mnt/root/bin /mnt/root/sbin /mnt/root/usr/bin /mnt/root/usr/sbin
+    $BUSYBOX cp -f /bin/busybox /mnt/root/bin/busybox 2>/dev/null || true
+    $BUSYBOX chmod 755 /mnt/root/bin/busybox 2>/dev/null || true
+    [ -e /mnt/root/bin/sh ] || $BUSYBOX ln -sf /bin/busybox /mnt/root/bin/sh 2>/dev/null || true
+
+    # Install debian-init as /sbin/init
+    $BUSYBOX cp -f /debian-init /mnt/root/sbin/init 2>/dev/null || true
+    $BUSYBOX chmod 755 /mnt/root/sbin/init 2>/dev/null || true
+
+    # Deploy tools and modules to /root
+    $BUSYBOX mkdir -p /mnt/root/root /mnt/root/root/modules /mnt/root/etc/udev/rules.d /mnt/root/etc/dpkg/dpkg.cfg.d
+    echo 'path-exclude=/sbin/init' > /mnt/root/etc/dpkg/dpkg.cfg.d/protect-sbin-init 2>/dev/null || true
+    if [ -f /tools.tar.gz ]; then
+        $BUSYBOX tar -xzf /tools.tar.gz -C /mnt/root/root/ 2>/dev/null || true
+        $BUSYBOX cp -f /mnt/root/root/udev/*.rules /mnt/root/etc/udev/rules.d/ 2>/dev/null || true
+        $BUSYBOX chmod +x /mnt/root/root/*.sh /mnt/root/root/*.py 2>/dev/null || true
+    fi
+    if [ -d /modules ]; then
+        $BUSYBOX cp -rf /modules/* /mnt/root/root/modules/ 2>/dev/null || true
+    fi
+
+    # Bind mounts
+    $BUSYBOX mkdir -p /mnt/root/proc /mnt/root/sys /mnt/root/dev /mnt/root/dev/pts /mnt/root/run /mnt/root/config
+    $BUSYBOX mount -o bind /proc /mnt/root/proc 2>/dev/null || true
+    $BUSYBOX mount -o bind /sys /mnt/root/sys 2>/dev/null || true
+    $BUSYBOX mount -o bind /dev /mnt/root/dev 2>/dev/null || true
+
+    log "Executing switch_root to Debian..."
+    exec $BUSYBOX switch_root /mnt/root /sbin/init
+}
+
 # 3. Search for MicroSD root partition
-echo "[*] Scanning for MicroSD card partitions..."
-ROOT_DEV=""
-for i in $($BUSYBOX seq 1 25); do
+log "Scanning for MicroSD card partitions..."
+for i in $($BUSYBOX seq 1 30); do
     $BUSYBOX mdev -s 2>/dev/null || true
     for p in /sys/class/block/mmcblk1p* /sys/class/block/mmcblk0p*; do
         [ -e "$p/dev" ] || continue
@@ -292,11 +328,10 @@ for i in $($BUSYBOX seq 1 25); do
     # Probe mmcblk1 partitions (microSD)
     for p in /dev/mmcblk1p1 /dev/mmcblk1p2 /dev/mmcblk1p*; do
         [ -b "$p" ] || continue
-        if $BUSYBOX mount -t ext4 -o ro "$p" /mnt/root 2>/dev/null; then
-            if [ -d /mnt/root/etc ] && [ -d /mnt/root/bin -o -d /mnt/root/usr ]; then
-                ROOT_DEV="$p"
-                $BUSYBOX umount /mnt/root
-                break 2
+        if $BUSYBOX mount -t ext4 "$p" /mnt/root 2>/dev/null || $BUSYBOX mount "$p" /mnt/root 2>/dev/null; then
+            if [ -d /mnt/root/etc ] || [ -d /mnt/root/bin ] || [ -d /mnt/root/usr ]; then
+                log "Found Debian on $p!"
+                do_switch "$p"
             fi
             $BUSYBOX umount /mnt/root 2>/dev/null || true
         fi
@@ -304,41 +339,24 @@ for i in $($BUSYBOX seq 1 25); do
     $BUSYBOX sleep 1
 done
 
-if [ -n "$ROOT_DEV" ] && $BUSYBOX mount -t ext4 -o rw "$ROOT_DEV" /mnt/root 2>/dev/null; then
-    echo "[*] MicroSD card found: $ROOT_DEV mounted successfully!"
+log "FAIL: Could not find Debian rootfs on microSD."
+log "Entering keepalive rescue loop (PID 1 will not exit)..."
 
-    # 4. Install latest debian-init
-    $BUSYBOX cp -f /debian-init /mnt/root/sbin/init 2>/dev/null || true
-    $BUSYBOX chmod 755 /mnt/root/sbin/init 2>/dev/null || true
+# Spawns a background shell on serial ACM if connected
+$BUSYBOX setsid sh -c 'while true; do
+    echo "gta8lte rescue shell" > /dev/ttyGS0 2>/dev/null
+    $BUSYBOX sh <>/dev/ttyGS0 >&0 2>&0
+    $BUSYBOX sleep 1
+done' </dev/null >/dev/null 2>&1 &
 
-    # 5. Extract/update tools and modules
-    echo "[*] Deploying userspace tools & kernel modules..."
-    $BUSYBOX mkdir -p /mnt/root/root /mnt/root/root/modules /mnt/root/etc/udev/rules.d /mnt/root/etc/dpkg/dpkg.cfg.d
-    echo 'path-exclude=/sbin/init' > /mnt/root/etc/dpkg/dpkg.cfg.d/protect-sbin-init
-    if [ -f /tools.tar.gz ]; then
-        $BUSYBOX tar -xzf /tools.tar.gz -C /mnt/root/root/ 2>/dev/null || true
-        $BUSYBOX cp -f /mnt/root/root/udev/*.rules /mnt/root/etc/udev/rules.d/ 2>/dev/null || true
-        $BUSYBOX chmod +x /mnt/root/root/*.sh /mnt/root/root/*.py 2>/dev/null || true
-    fi
-    if [ -d /modules ]; then
-        $BUSYBOX cp -rf /modules/* /mnt/root/root/modules/ 2>/dev/null || true
-    fi
-
-    # 6. Bind mounts
-    $BUSYBOX mkdir -p /mnt/root/proc /mnt/root/sys /mnt/root/dev /mnt/root/dev/pts /mnt/root/run /mnt/root/config
-    $BUSYBOX mount -o bind /proc /mnt/root/proc 2>/dev/null || true
-    $BUSYBOX mount -o bind /sys /mnt/root/sys 2>/dev/null || true
-    $BUSYBOX mount -o bind /dev /mnt/root/dev 2>/dev/null || true
-
-    echo "[*] Starting Debian GNU/Linux system (switch_root)..."
-    exec $BUSYBOX switch_root /mnt/root /sbin/init
-fi
-
-echo "[!] ERROR: Failed to find or mount Debian root partition on microSD card!"
-echo "[!] Spawning rescue shell on console..."
+# Keep PID 1 alive FOREVER so the kernel never panics!
 while true; do
-    $BUSYBOX sh
-    $BUSYBOX sleep 2
+    for n in /dev/watchdog /dev/watchdog0 /dev/watchdog1; do
+        [ -c "$n" ] && echo 1 > "$n" 2>/dev/null || true
+        [ -c "$n" ] && echo V > "$n" 2>/dev/null || true
+    done
+    echo "watchdog rstoff" > /proc/mdbg/at_cmd 2>/dev/null || true
+    $BUSYBOX sleep 5
 done
 EOF
 chmod 755 ramdisk_root/init
