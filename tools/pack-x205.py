@@ -149,8 +149,12 @@ def main():
     td = tempfile.mkdtemp()
     boot = Path(td) / "boot.img"
     boot.write_bytes(blob)
-    with tarfile.open(out_tar, "w") as tf:
-        tf.add(boot, arcname="boot.img")
+    with tarfile.open(out_tar, "w", format=tarfile.USTAR_FORMAT) as tf:
+        ti = tf.gettarinfo(boot, arcname="boot.img")
+        ti.mtime = int(ti.mtime)
+        ti.pax_headers = {}
+        with open(boot, "rb") as f:
+            tf.addfile(ti, f)
     os.system(f'xattr -c "{out_tar}" 2>/dev/null')
 
     print(f"stock {STOCK_BOOT} ({part_size} bytes)")
