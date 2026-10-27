@@ -8,6 +8,8 @@ fi
 
 echo "=== 2. Applying Patches ==="
 (cd kernel && python3 ../tools/patch-prime-vt.py)
+# Disable yamltree in dtc to avoid host libyaml mismatch
+sed -i 's/dtc-objs.*+=.*yamltree.o/# disabled yaml/' kernel/scripts/dtc/Makefile 2>/dev/null || true
 
 echo "=== 3. Configuring Kernel ==="
 cd kernel
