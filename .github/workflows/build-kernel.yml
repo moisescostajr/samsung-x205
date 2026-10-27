@@ -17,9 +17,9 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            build-essential bc bison flex libssl-dev libelf-dev \
+            build-essential bc bison flex libssl-dev libelf-dev libyaml-dev pkg-config \
             gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
-            python3 cpio lz4 gzip tar wget
+            python3 cpio lz4 gzip tar wget rsync
 
       - name: Build Kernel and Boot Pack
         run: |
