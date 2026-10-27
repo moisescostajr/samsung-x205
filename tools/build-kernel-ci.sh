@@ -33,6 +33,10 @@ for root, _, files in os.walk('kernel'):
 # Fix mm/filemap.c non-prototype declaration
 sed -i 's/static void filemap_tracing_mark_end()/static void filemap_tracing_mark_end(void)/' kernel/mm/filemap.c 2>/dev/null || true
 
+# Fix Samsung hx9031a.c stack buffer overflow in Is_Wifi_Version (causes crashdump on SM-X205)
+sed -i 's/char board_string\[12\]/char board_string[128]/' kernel/drivers/misc/sar/hx9031/hx9031a.c 2>/dev/null || true
+sed -i 's/BOARD_INFO"%s"/BOARD_INFO"%127s"/' kernel/drivers/misc/sar/hx9031/hx9031a.c 2>/dev/null || true
+
 # Fix relative TRACE_INCLUDE_PATH . in trace headers (sprd_dfs_trace.h etc.)
 python3 -c "
 import os, re
@@ -94,6 +98,51 @@ cp -f bb_temp/bin/busybox ramdisk_root/bin/busybox
 rm -rf bb_temp busybox.deb
 chmod 755 ramdisk_root/bin/busybox
 
+cat > ramdisk_root/debian-init << 'DEBEOF'
+#!/bin/busybox sh
+export PATH=/sbin:/bin:/usr/sbin:/usr/bin:/opt/kmsbin
+export HOME=/root
+trap '' HUP INT QUIT TSTP TTIN TTOU
+
+busybox mount -o remount,rw /
+busybox mkdir -p /dev/pts /run /tmp /dev/dri /config
+
+# Watchdog keepalive
+for w in /sys/class/watchdog/watchdog*; do
+    [ -e "$w/dev" ] || continue
+    wdev=$(busybox cat "$w/dev")
+    wname=${w##*/}
+    busybox mknod -m 600 "/dev/$wname" c "${wdev%:*}" "${wdev#*:}" 2>/dev/null || true
+done
+busybox mknod -m 666 /dev/watchdog c 10 130 2>/dev/null || true
+busybox sh -c 'trap "" HUP INT QUIT; while true; do echo V > /dev/watchdog 2>/dev/null; echo 1 > /dev/watchdog 2>/dev/null; sleep 4; done' </dev/null >/dev/null 2>&1 &
+
+busybox mknod -m 666 /dev/null c 1 3 2>/dev/null || true
+busybox mknod -m 666 /dev/zero c 1 5 2>/dev/null || true
+busybox mknod -m 600 /dev/ttyGS0 c 509 0 2>/dev/null || true
+busybox mount -t devpts devpts /dev/pts 2>/dev/null || true
+busybox mdev -s 2>/dev/null || true
+
+# Run hardware bringup if present
+if [ -x /root/hw-up.sh ]; then
+    busybox sh /root/hw-up.sh </dev/null >> /root/hw-up.log 2>&1 &
+fi
+
+# Serial shell on USB ACM
+busybox setsid sh -c 'trap "" HUP INT QUIT TSTP TTIN TTOU
+while true; do
+    echo "gta8lte debian prompt" > /dev/ttyGS0
+    busybox sh <>/dev/ttyGS0 >&0 2>&0
+    busybox sleep 1
+done' </dev/null >/dev/null 2>&1 &
+
+while true; do
+    echo V > /dev/watchdog 2>/dev/null || true
+    busybox sleep 5
+done
+DEBEOF
+chmod 755 ramdisk_root/debian-init
+
 cat > ramdisk_root/init << 'EOF'
 #!/bin/busybox sh
 export PATH=/bin:/sbin:/usr/bin:/usr/sbin
@@ -109,7 +158,22 @@ $BUSYBOX mknod -m 666 /dev/zero c 1 5 2>/dev/null || true
 $BUSYBOX mknod -m 600 /dev/kmsg c 1 11 2>/dev/null || true
 $BUSYBOX mdev -s 2>/dev/null || true
 
-$BUSYBOX sh -c 'trap "" HUP INT QUIT; while true; do echo V > /dev/watchdog 2>/dev/null; sleep 8; done' </dev/null >/dev/null 2>&1 &
+# Hardware watchdog keepalive nodes
+for w in /sys/class/watchdog/watchdog*; do
+    [ -e "$w/dev" ] || continue
+    wdev=$($BUSYBOX cat "$w/dev")
+    wname=${w##*/}
+    $BUSYBOX mknod -m 600 "/dev/$wname" c "${wdev%:*}" "${wdev#*:}" 2>/dev/null || true
+done
+$BUSYBOX mknod -m 666 /dev/watchdog c 10 130 2>/dev/null || true
+$BUSYBOX sh -c 'trap "" HUP INT QUIT
+while true; do
+    for n in /dev/watchdog /dev/watchdog0 /dev/watchdog1; do
+        [ -c "$n" ] && echo 1 > "$n" 2>/dev/null || true
+        [ -c "$n" ] && echo V > "$n" 2>/dev/null || true
+    done
+    $BUSYBOX sleep 4
+done' </dev/null >/dev/null 2>&1 &
 
 echo "gta8-init: waiting for mmcblk1p1 (microSD)..."
 for i in $(busybox seq 1 15); do
@@ -119,6 +183,12 @@ done
 
 if $BUSYBOX mount -t ext4 -o rw /dev/mmcblk1p1 /mnt/root 2>/dev/null || $BUSYBOX mount /dev/mmcblk1p1 /mnt/root; then
     echo "gta8-init: microSD mounted successfully, switching root to Debian!"
+    $BUSYBOX cp /debian-init /mnt/root/sbin/init 2>/dev/null || true
+    $BUSYBOX chmod 755 /mnt/root/sbin/init 2>/dev/null || true
+    $BUSYBOX mkdir -p /mnt/root/proc /mnt/root/sys /mnt/root/dev /mnt/root/dev/pts /mnt/root/run /mnt/root/config
+    $BUSYBOX mount -o bind /proc /mnt/root/proc 2>/dev/null || true
+    $BUSYBOX mount -o bind /sys /mnt/root/sys 2>/dev/null || true
+    $BUSYBOX mount -o bind /dev /mnt/root/dev 2>/dev/null || true
     exec $BUSYBOX switch_root /mnt/root /sbin/init
 fi
 
