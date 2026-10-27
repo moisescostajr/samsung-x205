@@ -58,8 +58,12 @@ if ! busybox grep -q " /run tmpfs " /proc/mounts && ! busybox pidof phoc >/dev/n
         || log run_tmpfs_fail
 fi
 busybox mkdir -p /run/dbus /run/udev /run/user /run/NetworkManager /run/wpa_supplicant /run/lock
-insmod /opt/kmsbin/pmicwdt_off.ko >> /root/hw-up.log 2>&1
-log pmicwdt_insmod
+echo "watchdog rstoff" > /proc/mdbg/at_cmd 2>/dev/null || true
+for ko in /root/modules/pmicwdt_off.ko /modules/pmicwdt_off.ko /pmicwdt_off.ko /opt/kmsbin/pmicwdt_off.ko; do
+    if [ -f "$ko" ]; then
+        insmod "$ko" >> /root/hw-up.log 2>&1 && log "pmicwdt_insmod: $ko" && break
+    fi
+done
 
 # X200 and X205 share the SoC but not the GPT index. LTE inserts
 # l_modem/l_ldsp/l_gdsp and shifts boot/socko/super. Always resolve by name.
