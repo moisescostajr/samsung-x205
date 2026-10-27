@@ -35,8 +35,9 @@ sed -i 's/static void filemap_tracing_mark_end()/static void filemap_tracing_mar
 
 # Fix relative TRACE_INCLUDE_PATH . in trace headers (sprd_dfs_trace.h etc.)
 python3 -c "
-import os
+import os, re
 
+pat = re.compile(r'#define\s+TRACE_INCLUDE_PATH\s+\.\s*$', re.MULTILINE)
 for root, _, files in os.walk('kernel'):
     for f in files:
         if f.endswith('.h'):
@@ -44,9 +45,9 @@ for root, _, files in os.walk('kernel'):
             try:
                 with open(p, 'r', encoding='utf-8', errors='ignore') as fp:
                     content = fp.read()
-                if '#define TRACE_INCLUDE_PATH .' in content:
+                if pat.search(content):
                     rel_dir = os.path.relpath(root, 'kernel')
-                    fixed = content.replace('#define TRACE_INCLUDE_PATH .', f'#define TRACE_INCLUDE_PATH ../../{rel_dir}')
+                    fixed = pat.sub(f'#define TRACE_INCLUDE_PATH ../../{rel_dir}', content)
                     with open(p, 'w', encoding='utf-8') as fp:
                         fp.write(fixed)
                     print(f'Fixed trace path in {p} -> ../../{rel_dir}')
