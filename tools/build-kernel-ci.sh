@@ -88,7 +88,10 @@ cp -f tools/dmaheap/*.ko boot-pack/modules/ 2>/dev/null || true
 echo "=== 6. Building Ramdisk ==="
 mkdir -p ramdisk_root/bin ramdisk_root/sbin ramdisk_root/dev ramdisk_root/proc ramdisk_root/sys ramdisk_root/mnt/root ramdisk_root/tmp ramdisk_root/config
 
-wget -q -O ramdisk_root/bin/busybox https://busybox.net/downloads/binaries/1.35.0-aarch64-linux-musl/busybox
+wget -q -O busybox.deb http://ports.ubuntu.com/pool/main/b/busybox/busybox-static_1.30.1-7ubuntu3_arm64.deb
+dpkg-deb -x busybox.deb bb_temp
+cp -f bb_temp/bin/busybox ramdisk_root/bin/busybox
+rm -rf bb_temp busybox.deb
 chmod 755 ramdisk_root/bin/busybox
 
 cat > ramdisk_root/init << 'EOF'
