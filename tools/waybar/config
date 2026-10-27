@@ -1,0 +1,59 @@
+{
+    "layer": "top",
+    "position": "top",
+    "height": 44,
+    "modules-left": ["custom/menu", "custom/terminal", "custom/files", "custom/rotate"],
+    "modules-center": ["clock"],
+    "modules-right": ["network", "battery", "custom/osk", "custom/phosh"],
+    "clock": {
+        "format": "{:%a %d  %H:%M}",
+        "tooltip": false
+    },
+    "battery": {
+        "bat": "battery",
+        "interval": 15,
+        "format": "{capacity}%",
+        "format-charging": "{capacity}%+",
+        "states": {
+            "warning": 20,
+            "critical": 10
+        }
+    },
+    "network": {
+        "interface": "wlan0",
+        "interval": 10,
+        "format-wifi": "{essid}",
+        "format-disconnected": "offline",
+        "tooltip": false
+    },
+    "custom/menu": {
+        "format": "Apps",
+        "tooltip": false,
+        "on-click": "wofi --show drun --insensitive -W 70% -H 50%"
+    },
+    "custom/terminal": {
+        "format": "Term",
+        "tooltip": false,
+        "on-click": "xfce4-terminal"
+    },
+    "custom/files": {
+        "format": "Files",
+        "tooltip": false,
+        "on-click": "thunar"
+    },
+    "custom/rotate": {
+        "format": "Rotate",
+        "tooltip": false,
+        "on-click": "/usr/local/bin/gta8-rotate"
+    },
+    "custom/osk": {
+        "format": "KB",
+        "tooltip": false,
+        "on-click": "squeekboard"
+    },
+    "custom/phosh": {
+        "format": "Phosh",
+        "tooltip": false,
+        "on-click": "sudo /root/start-phosh.sh"
+    }
+}

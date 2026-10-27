@@ -1,0 +1,15 @@
+# Unisoc / Spreadtrum LTE virtual TTY rules for Samsung Galaxy Tab A8 SM-X205
+# Grants dialout group access and tags ports for ModemManager / NetworkManager
+
+ACTION=="add|change", KERNEL=="stty_lte*", SUBSYSTEM=="tty", GROUP="dialout", MODE="0660", ENV{ID_MM_CANDIDATE}="1"
+
+# Primary AT command channel for ModemManager
+ACTION=="add|change", KERNEL=="stty_lte0", SUBSYSTEM=="tty", ENV{ID_MM_PORT_TYPE_AT_PRIMARY}="1"
+
+# Secondary AT channel / data PPP channel
+ACTION=="add|change", KERNEL=="stty_lte1", SUBSYSTEM=="tty", ENV{ID_MM_PORT_TYPE_AT_SECONDARY}="1"
+ACTION=="add|change", KERNEL=="stty_lte2", SUBSYSTEM=="tty", ENV{ID_MM_PORT_TYPE_AT_SECONDARY}="1"
+
+# Pipe and buffer nodes
+ACTION=="add|change", KERNEL=="spipe_lte*", GROUP="dialout", MODE="0660"
+ACTION=="add|change", KERNEL=="sbuf_lte*", GROUP="dialout", MODE="0660"

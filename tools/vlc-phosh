@@ -1,0 +1,47 @@
+#!/bin/sh
+# VLC on the Phosh session. The session runs as root and stock VLC refuses
+# that, so this execs a copy whose geteuid() import is renamed to getppid().
+#
+# Join the compositor if launched from SSH (no WAYLAND_DISPLAY yet).
+if [ -z "$WAYLAND_DISPLAY" ]; then
+    phoc_pid=$(pidof phoc | awk '{print $1}')
+    if [ -n "$phoc_pid" ]; then
+        for v in XDG_RUNTIME_DIR WAYLAND_DISPLAY DBUS_SESSION_BUS_ADDRESS; do
+            line=$(tr '\0' '\n' < "/proc/$phoc_pid/environ" | grep "^$v=")
+            [ -n "$line" ] && export "$line"
+        done
+    fi
+fi
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/0}"
+export WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-wayland-0}"
+export HOME=/root
+export QT_QPA_PLATFORM=wayland
+export QT_WAYLAND_DISABLE_WINDOWDECORATION=1
+# VLC's Qt + gles2 path talks desktop OpenGL/EGL to the Mali blob, gets a
+# null EGLConfig, and paints a black video window while Pulse still plays.
+# wl_shm puts pixels on screen; phoc still composites that buffer on the GPU.
+# Use mpv if you want client-side Mali rendering.
+unset LD_PRELOAD
+unset LD_LIBRARY_PATH
+unset MALI_WAYLAND_DMABUF_PROTOCOL
+export LIBGL_ALWAYS_SOFTWARE=1
+export GALLIUM_DRIVER=llvmpipe
+export QT_OPENGL=software
+# Panel is 1920x1200 after the 270° transform (16:10). 1080p is 16:9, so
+# fullscreen leaves a strip that wl_shm/wp_viewporter does not paint; phoc
+# then repeats the last line ("smeared" bottom). Pad to 16:10 with black.
+#
+# Volume keys never reach VLC (Phosh/Pulse take them). Steal them only for
+# this process: rocker = playlist next/prev, power still forwarded to Phosh.
+keys_pid=
+if [ -x /usr/local/bin/vlc-volkeys.py ] && [ -c /dev/input/event4 ]; then
+    python3 /usr/local/bin/vlc-volkeys.py >/root/vlc-volkeys.log 2>&1 &
+    keys_pid=$!
+fi
+/usr/local/bin/vlc-root --no-qt-privacy-ask \
+    --aout=pulse --avcodec-hw=none --glconv=none --vout=wl_shm \
+    --volume 256 \
+    --video-filter=canvas --canvas-aspect=16:10 --canvas-padd "$@"
+st=$?
+[ -n "$keys_pid" ] && kill "$keys_pid" 2>/dev/null
+exit $st

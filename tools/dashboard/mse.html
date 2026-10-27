@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<title>mse</title>
+<script src="mpegts.min.js"></script>
+<script>
+const rows = [];
+function add(k, v) { rows.push(k + "=" + v); }
+add("mpegts", typeof mpegts);
+add("isSupported", !!(window.mpegts && mpegts.isSupported()));
+add("MediaSource", typeof MediaSource);
+add("WebKitMS", typeof WebKitMediaSource);
+try {
+  add("high", MediaSource.isTypeSupported('video/mp4; codecs="avc1.640028,mp4a.40.2"'));
+  add("main", MediaSource.isTypeSupported('video/mp4; codecs="avc1.4D401F,mp4a.40.2"'));
+  add("base", MediaSource.isTypeSupported('video/mp4; codecs="avc1.42E01E,mp4a.40.2"'));
+  add("aac", MediaSource.isTypeSupported('audio/mp4; codecs="mp4a.40.2"'));
+} catch (e) { add("typeErr", e.message); }
+document.title = rows.join(" | ");
+fetch("mse-result.txt", { method: "PUT", body: document.title });
+</script>

@@ -1,0 +1,6 @@
+# 8BitDo Ultimate C Wired (2dc8:3106) exposes two hid-generic nodes:
+#   input0 — gamepad (hats, A/B/X/Y, analog)
+#   input1 — mouse (REL_X/Y + mouse buttons)
+# udev tags the mouse as ID_INPUT_JOYSTICK too, so RetroArch binds port #0
+# to the mouse and button presses do nothing in the menu.
+ACTION=="add|change", KERNEL=="event*", ENV{ID_VENDOR_ID}=="2dc8", ENV{ID_MODEL_ID}=="3106", ENV{ID_INPUT_MOUSE}=="1", ENV{ID_INPUT_JOYSTICK}=""

@@ -1,0 +1,318 @@
+#!/usr/bin/env python3
+"""Pack boot-only v38: v37 unpack, kmsg-only logs (do not block on ttyGS0)."""
+from pathlib import Path
+import gzip, hashlib, os, struct, tarfile, tempfile
+
+BOOT_PACK = Path(os.environ.get("GTA8_BOOT_PACK", Path(__file__).resolve().parents[1] / "boot-pack"))
+
+src_path = BOOT_PACK / "boot-gta8wifi-debug-v32.img"
+out_img = BOOT_PACK / "boot-gta8wifi-debug-v38.img"
+out_tar = BOOT_PACK / "AP-boot-only-debug-v38.tar"
+
+INIT = r"""#!/bin/busybox sh
+# v38: like v37 but never write ttyGS0 until switch_root/shell (musb blocks).
+export PATH=/bin:/sbin:/usr/bin:/usr/sbin
+BUSYBOX=/bin/busybox
+trap '' HUP INT QUIT TSTP TTIN TTOU
+
+log() {
+    echo "gta8-init: $*"
+    echo "gta8-init: $*" > /dev/kmsg 2>/dev/null || true
+}
+
+$BUSYBOX mkdir -p /proc /sys /dev /tmp /run /mnt /config
+$BUSYBOX mount -t proc proc /proc
+$BUSYBOX mount -t sysfs sysfs /sys
+$BUSYBOX mount -t tmpfs tmpfs /dev
+$BUSYBOX mkdir -p /dev/pts /dev/shm
+$BUSYBOX mount -t devpts devpts /dev/pts 2>/dev/null || true
+$BUSYBOX mknod -m 666 /dev/null c 1 3 2>/dev/null || true
+$BUSYBOX mknod -m 666 /dev/zero c 1 5 2>/dev/null || true
+$BUSYBOX mknod -m 600 /dev/kmsg c 1 11 2>/dev/null || true
+$BUSYBOX mknod -m 666 /dev/tty c 5 0 2>/dev/null || true
+$BUSYBOX mknod -m 666 /dev/ptmx c 5 2 2>/dev/null || true
+$BUSYBOX sh -c 'trap "" HUP INT QUIT; while true; do echo V > /dev/watchdog; sleep 8; done' </dev/null >/dev/null 2>&1 &
+
+log "v38 waiting 12s for UDC"
+$BUSYBOX sleep 12
+echo disable > /sys/devices/platform/soc/soc:aon/5fff0000.usb/musb_hostenable 2>/dev/null || true
+echo peripheral > /sys/devices/platform/soc/soc:aon/5fff0000.usb/musb-hdrc.0.auto/mode 2>/dev/null || true
+echo on > /sys/devices/platform/soc/soc:aon/5fff0000.usb/power/control 2>/dev/null || true
+echo 1 > /sys/class/usb_notify/usb_control/usb_data_enabled 2>/dev/null || true
+echo 1 > /sys/class/usb_notify/usb_notify/usb_data_enabled 2>/dev/null || true
+echo OFF > /sys/class/usb_notify/usb_notify/disable 2>/dev/null || true
+echo OFF > /sys/devices/virtual/usb_notify/usb_notify/disable 2>/dev/null || true
+for f in /sys/class/usb_notify/*/usb_data_enabled /sys/class/usb_notify/*/disable; do
+    [ -e "$f" ] || continue
+    case "$f" in
+        *disable) echo OFF > "$f" 2>/dev/null || true ;;
+        *) echo 1 > "$f" 2>/dev/null || true ;;
+    esac
+done
+$BUSYBOX mount -t configfs none /config 2>/dev/null || true
+$BUSYBOX mount -t configfs configfs /sys/kernel/config 2>/dev/null || true
+i=0
+while [ $i -lt 20 ]; do
+    [ -e /sys/class/udc/musb-hdrc.0.auto ] && break
+    $BUSYBOX sleep 1
+    i=$((i+1))
+done
+G=/config/usb_gadget/g1
+[ -d /config/usb_gadget ] || G=/sys/kernel/config/usb_gadget/g1
+$BUSYBOX mkdir -p "$G/strings/0x409" "$G/functions/acm.gs0" "$G/configs/b.1/strings/0x409"
+echo 0x1d6b > "$G/idVendor"
+echo 0x0104 > "$G/idProduct"
+echo 0x0200 > "$G/bcdUSB"
+echo 239 > "$G/bDeviceClass" 2>/dev/null || true
+echo 0x02 > "$G/bDeviceSubClass" 2>/dev/null || true
+echo 0x01 > "$G/bDeviceProtocol" 2>/dev/null || true
+echo 0123456789abcdef > "$G/strings/0x409/serialnumber"
+echo Droidian > "$G/strings/0x409/manufacturer"
+echo gta8wifi-debug > "$G/strings/0x409/product"
+echo ACM > "$G/configs/b.1/strings/0x409/configuration"
+echo 0x80 > "$G/configs/b.1/bmAttributes" 2>/dev/null || true
+echo 500 > "$G/configs/b.1/MaxPower" 2>/dev/null || true
+$BUSYBOX ln -sfn "$G/functions/acm.gs0" "$G/configs/b.1/f1"
+maj=509; min=0
+if [ -e /sys/class/tty/ttyGS0/dev ]; then
+    dev=$($BUSYBOX cat /sys/class/tty/ttyGS0/dev)
+    maj=${dev%:*}
+    min=${dev#*:}
+fi
+$BUSYBOX mknod -m 600 /dev/ttyGS0 c "$maj" "$min" 2>/dev/null || true
+exec 9<>/dev/ttyGS0 || true
+UDC=musb-hdrc.0.auto
+n=0
+while [ $n -lt 15 ]; do
+    echo none > "$G/UDC" 2>/dev/null || echo "" > "$G/UDC" 2>/dev/null || true
+    $BUSYBOX sleep 1
+    echo "$UDC" > "$G/UDC" 2>/dev/null && break
+    echo disable > /sys/devices/platform/soc/soc:aon/5fff0000.usb/musb_hostenable 2>/dev/null || true
+    echo peripheral > /sys/devices/platform/soc/soc:aon/5fff0000.usb/musb-hdrc.0.auto/mode 2>/dev/null || true
+    $BUSYBOX sleep 2
+    n=$((n+1))
+done
+echo 322f0000.watchdog > /sys/bus/platform/drivers/sprd-wdt-fiq/unbind 2>/dev/null || true
+echo v38 > /gta8-booted
+log "v38 ACM bound"
+
+$BUSYBOX mdev -s 2>/dev/null || true
+
+bdev() {
+    [ -e "/sys/class/block/$1/dev" ] || return 1
+    d=$($BUSYBOX cat "/sys/class/block/$1/dev")
+    $BUSYBOX mknod -m 660 "/dev/$1" b "${d%:*}" "${d#*:}" 2>/dev/null || true
+}
+
+do_switch() {
+    $BUSYBOX cp /debian-init "$1/sbin/init"
+    $BUSYBOX chmod 755 "$1/sbin/init"
+    $BUSYBOX mkdir -p "$1/proc" "$1/sys" "$1/dev" "$1/dev/pts" "$1/run" "$1/config"
+    $BUSYBOX mount -o bind /proc "$1/proc" 2>/dev/null || true
+    $BUSYBOX mount -o bind /sys "$1/sys" 2>/dev/null || true
+    $BUSYBOX mount -o bind /dev "$1/dev" 2>/dev/null || true
+    $BUSYBOX mount -o bind /config "$1/config" 2>/dev/null || true
+    log "switch_root $1"
+    exec $BUSYBOX switch_root "$1" /sbin/init
+}
+
+looks_debian() {
+    [ -d "$1/etc" ] && [ -x "$1/bin/busybox" -o -x "$1/usr/sbin/mke2fs" -o -x "$1/sbin/init" ]
+}
+
+big_tar() {
+    [ -f "$1" ] || return 1
+    sz=$($BUSYBOX ls -l "$1" | $BUSYBOX awk '{print $5}')
+    [ -n "$sz" ] && [ "$sz" -gt 1000000 ]
+}
+
+find_tar() {
+    for t in debian.tar.gz DEBIAN.TAR DEBIAN.TGZ debian-bookworm-arm64.tar.gz rootfs.tar.gz; do
+        if big_tar "$1/$t"; then
+            echo "$1/$t"
+            return 0
+        fi
+    done
+    for t in "$1"/*.tar.gz "$1"/*.TAR.GZ "$1"/*.tgz; do
+        big_tar "$t" || continue
+        echo "$t"
+        return 0
+    done
+    return 1
+}
+
+unpack_tar_to_ext4() {
+    tarf="$1"
+    part="$2"
+    log "copy $tarf then mke2fs $part"
+    $BUSYBOX mount -t tmpfs -o size=256m tmpfs /tmp
+    $BUSYBOX cp "$tarf" /tmp/debian.tar.gz || { log "cp tar fail"; return 1; }
+    $BUSYBOX umount /mnt/sd 2>/dev/null || true
+    $BUSYBOX umount /mnt/sd2 2>/dev/null || true
+    $BUSYBOX umount /mnt/root 2>/dev/null || true
+    log "mke2fs"
+    $BUSYBOX mke2fs -F "$part" 2>/dev/null || $BUSYBOX mke2fs "$part" || { log "mke2fs fail"; return 1; }
+    $BUSYBOX mkdir -p /mnt/root
+    $BUSYBOX mount -t ext4 "$part" /mnt/root 2>/dev/null || $BUSYBOX mount "$part" /mnt/root || { log "mount ext4 fail"; return 1; }
+    log "tar extract"
+    $BUSYBOX tar -xzf /tmp/debian.tar.gz -C /mnt/root || { log "tar fail"; return 1; }
+    log "ext4 debian ready"
+    do_switch /mnt/root
+}
+
+$BUSYBOX mkdir -p /mnt/root /mnt/sd /mnt/sd2
+for p in mmcblk1p1 mmcblk1p2 mmcblk1; do
+    bdev "$p" || continue
+    log "try $p"
+    if $BUSYBOX mount -t ext4 "/dev/$p" /mnt/root 2>/dev/null || $BUSYBOX mount -t ext2 "/dev/$p" /mnt/root 2>/dev/null; then
+        if looks_debian /mnt/root; then
+            do_switch /mnt/root
+        fi
+        $BUSYBOX umount /mnt/root 2>/dev/null || true
+    fi
+    if $BUSYBOX mount -t vfat "/dev/$p" /mnt/sd 2>/dev/null || $BUSYBOX mount -t msdos "/dev/$p" /mnt/sd 2>/dev/null || $BUSYBOX mount "/dev/$p" /mnt/sd 2>/dev/null; then
+        log "fat mounted $p"
+        TAR=$(find_tar /mnt/sd) || { log "no big tar on $p"; $BUSYBOX umount /mnt/sd 2>/dev/null || true; continue; }
+        log "found $TAR"
+        unpack_tar_to_ext4 "$TAR" "/dev/$p"
+        $BUSYBOX umount /mnt/sd 2>/dev/null || true
+    else
+        log "no fat on $p"
+    fi
+done
+
+log "ramdisk shell"
+$BUSYBOX setsid sh -c 'trap "" HUP INT QUIT TSTP TTIN TTOU
+while true; do
+    echo "gta8wifi ramdisk v38" > /dev/ttyGS0
+    $BUSYBOX sh <>/dev/ttyGS0 >&0 2>&0
+    $BUSYBOX sleep 1
+done' </dev/null >/dev/null 2>&1 &
+while true; do
+    echo V > /dev/watchdog 2>/dev/null || true
+    $BUSYBOX sleep 8
+done
+"""
+
+DEBIAN_INIT = r"""#!/bin/busybox sh
+export PATH=/sbin:/bin:/usr/sbin:/usr/bin
+export HOME=/root
+trap '' HUP INT QUIT TSTP TTIN TTOU
+busybox mkdir -p /dev/pts /run
+[ -e /dev/ttyGS0 ] || busybox mknod -m 600 /dev/ttyGS0 c 509 0
+[ -e /dev/watchdog ] || busybox mknod -m 666 /dev/watchdog c 10 130
+[ -e /dev/null ] || busybox mknod -m 666 /dev/null c 1 3
+busybox mount -t devpts devpts /dev/pts 2>/dev/null
+busybox sh -c 'trap "" HUP; while true; do echo V > /dev/watchdog; sleep 8; done' </dev/null >/dev/null 2>&1 &
+busybox hostname gta8wifi
+cd /root
+busybox setsid sh -c 'trap "" HUP INT QUIT TSTP TTIN TTOU
+while true; do
+    echo "gta8wifi debian v38" > /dev/ttyGS0
+    busybox sh <>/dev/ttyGS0 >&0 2>&0
+    busybox sleep 1
+done' </dev/null >/dev/null 2>&1 &
+while true; do
+    echo V > /dev/watchdog 2>/dev/null || true
+    busybox sleep 8
+done
+"""
+
+
+def parse_cpio(data):
+    off = 0
+    entries = []
+    while off + 110 <= len(data):
+        hdr = data[off : off + 110]
+        if not hdr.startswith(b"070701"):
+            raise SystemExit(f"bad cpio magic at {off}")
+        namesize = int(hdr[94:102], 16)
+        filesize = int(hdr[54:62], 16)
+        name = data[off + 110 : off + 110 + namesize - 1].decode("utf-8", "replace")
+        data_off = (off + 110 + namesize + 3) // 4 * 4
+        payload = data[data_off : data_off + filesize]
+        next_off = (data_off + filesize + 3) // 4 * 4
+        entries.append((hdr, name, payload))
+        if name == "TRAILER!!!":
+            break
+        off = next_off
+    return entries
+
+
+def emit_cpio(entries):
+    out = bytearray()
+    for hdr, name, payload in entries:
+        name_b = name.encode("utf-8") + b"\x00"
+        hdr = bytearray(hdr)
+        hdr[54:62] = f"{len(payload):08X}".encode()
+        hdr[94:102] = f"{len(name_b):08X}".encode()
+        out.extend(hdr)
+        out.extend(name_b)
+        while len(out) % 4:
+            out.append(0)
+        out.extend(payload)
+        while len(out) % 4:
+            out.append(0)
+    return bytes(out)
+
+
+def pad(n, page=2048):
+    return (n + page - 1) // page * page
+
+
+def main():
+    src = src_path.read_bytes()
+    ksz = struct.unpack_from("<I", src, 8)[0]
+    old_rsz = struct.unpack_from("<I", src, 16)[0]
+    ssz = struct.unpack_from("<I", src, 24)[0]
+    rec_dtbo_size = struct.unpack_from("<I", src, 1632)[0]
+    dtb_size = struct.unpack_from("<I", src, 1644)[0]
+    r_off = 2048 + pad(ksz)
+    d_off = r_off + pad(old_rsz) + pad(ssz) + pad(rec_dtbo_size)
+    kernel = src[2048 : 2048 + ksz]
+    dtb = src[d_off : d_off + dtb_size]
+    cpio = gzip.decompress(src[r_off : r_off + old_rsz])
+    entries = parse_cpio(cpio)
+    got_init = got_deb = False
+    for i, (hdr, name, payload) in enumerate(entries):
+        if name == "init":
+            entries[i] = (hdr, name, INIT.encode())
+            got_init = True
+            print("init", len(payload), "->", len(INIT.encode()))
+        if name == "debian-init":
+            entries[i] = (hdr, name, DEBIAN_INIT.encode())
+            got_deb = True
+            print("debian-init", len(payload), "->", len(DEBIAN_INIT.encode()))
+    assert got_init and got_deb
+    new_cpio = emit_cpio(entries)
+    gz = gzip.compress(new_cpio, compresslevel=9)
+    print("gz", len(gz), "slot", pad(old_rsz))
+    assert len(gz) <= pad(old_rsz), f"ramdisk {len(gz)} > {pad(old_rsz)}"
+    out = bytearray(src)
+    out[16:20] = struct.pack("<I", len(gz))
+    out[r_off : r_off + pad(old_rsz)] = b"\x00" * pad(old_rsz)
+    out[r_off : r_off + len(gz)] = gz
+    second = src[r_off + pad(old_rsz) : r_off + pad(old_rsz) + ssz] if ssz else b""
+    h = hashlib.sha1()
+    h.update(kernel)
+    h.update(gz)
+    h.update(second)
+    h.update(dtb)
+    out[1648 : 1648 + 32] = h.digest() + b"\x00" * 12
+    assert bytes(out)[0x1600000:0x1600004] == b"AVB0"
+    assert bytes(out).rfind(b"AVBf") == 67108800
+    rd = gzip.decompress(bytes(out[r_off : r_off + len(gz)]))
+    assert b"switch_root" in rd and b"debian.tar.gz" in rd and b"debian v38" in rd
+    out_img.write_bytes(bytes(out))
+    os.environ["COPYFILE_DISABLE"] = "1"
+    td = tempfile.mkdtemp()
+    boot = Path(td) / "boot.img"
+    boot.write_bytes(bytes(out))
+    with tarfile.open(out_tar, "w") as tf:
+        tf.add(boot, arcname="boot.img")
+    os.system(f'xattr -c "{out_tar}" 2>/dev/null')
+    print("wrote", out_tar, out_tar.stat().st_size)
+
+
+if __name__ == "__main__":
+    main()

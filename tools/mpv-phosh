@@ -1,0 +1,7 @@
+#!/bin/sh
+# mpv on the Phosh session. Uses wlshm because phoc composites with pixman
+# and cannot show EGL/GL client buffers.
+unset LD_PRELOAD
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/0}"
+export HOME=/root
+exec /usr/bin/mpv "$@"

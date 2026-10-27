@@ -1,0 +1,30 @@
+#!/bin/sh
+# Open the local Apache dashboard fullscreen in GNOME Web (epiphany).
+if [ -z "$WAYLAND_DISPLAY" ]; then
+    phoc_pid=$(pidof phoc | awk '{print $1}')
+    if [ -n "$phoc_pid" ]; then
+        for v in XDG_RUNTIME_DIR WAYLAND_DISPLAY DBUS_SESSION_BUS_ADDRESS; do
+            line=$(tr '\0' '\n' < "/proc/$phoc_pid/environ" | grep "^$v=")
+            [ -n "$line" ] && export "$line"
+        done
+    fi
+fi
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/0}"
+export WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-wayland-0}"
+export HOME=/root
+# This kernel is not a full systemd/userns desktop; WebKit's bwrap sandbox
+# often cannot start. GNOME Web still renders without it.
+export WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1
+export GTK_USE_PORTAL=0
+unset LD_PRELOAD
+unset LIBGL_ALWAYS_SOFTWARE
+if [ -f /opt/mali/libEGL.so.1 ] && [ -c /dev/dma_heap/system ]; then
+    export LD_LIBRARY_PATH=/opt/mali
+    export MALI_WAYLAND_DMABUF_PROTOCOL=1
+    export GSK_RENDERER=gl
+fi
+if [ ! -f /run/homedash-sipd.pid ] || ! kill -0 "$(cat /run/homedash-sipd.pid 2>/dev/null)" 2>/dev/null; then
+    python3 /usr/local/bin/homedash-sipd.py >>/tmp/homedash-sipd.log 2>&1 &
+    echo $! > /run/homedash-sipd.pid
+fi
+exec python3 /usr/local/bin/dash-kiosk.py "${1:-http://127.0.0.1/}"

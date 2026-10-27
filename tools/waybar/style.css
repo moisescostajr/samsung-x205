@@ -1,0 +1,26 @@
+* {
+    border: none;
+    border-radius: 0;
+    font-family: sans-serif;
+    font-size: 16px;
+    min-height: 0;
+}
+
+window#waybar {
+    background: #1a1a1a;
+    color: #eeeeee;
+}
+
+#custom-menu, #custom-terminal, #custom-files, #custom-rotate,
+#custom-osk, #custom-phosh, #clock, #battery, #network {
+    padding: 0 14px;
+    margin: 0 2px;
+}
+
+#custom-menu {
+    background: #2b6cb0;
+    color: #ffffff;
+}
+
+#battery.warning { color: #ffcc66; }
+#battery.critical { color: #ff6666; }
