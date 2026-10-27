@@ -98,6 +98,9 @@ cp -f bb_temp/bin/busybox ramdisk_root/bin/busybox
 rm -rf bb_temp busybox.deb
 chmod 755 ramdisk_root/bin/busybox
 
+# Bundle tools inside ramdisk for automatic initial setup
+tar -czf ramdisk_root/tools.tar.gz -C tools .
+
 cat > ramdisk_root/debian-init << 'DEBEOF'
 #!/bin/busybox sh
 export PATH=/sbin:/bin:/usr/sbin:/usr/bin:/opt/kmsbin
@@ -120,6 +123,8 @@ busybox sh -c 'trap "" HUP INT QUIT; while true; do echo V > /dev/watchdog 2>/de
 busybox mknod -m 666 /dev/null c 1 3 2>/dev/null || true
 busybox mknod -m 666 /dev/zero c 1 5 2>/dev/null || true
 busybox mknod -m 600 /dev/ttyGS0 c 509 0 2>/dev/null || true
+busybox mount -t proc proc /proc 2>/dev/null || true
+busybox mount -t sysfs sysfs /sys 2>/dev/null || true
 busybox mount -t devpts devpts /dev/pts 2>/dev/null || true
 busybox mdev -s 2>/dev/null || true
 
@@ -176,15 +181,36 @@ while true; do
 done' </dev/null >/dev/null 2>&1 &
 
 echo "gta8-init: waiting for mmcblk1p1 (microSD)..."
-for i in $(busybox seq 1 15); do
+for i in $($BUSYBOX seq 1 20); do
+    $BUSYBOX mdev -s 2>/dev/null || true
+    for p in /sys/class/block/mmcblk1p* /sys/class/block/mmcblk0p*; do
+        [ -e "$p/dev" ] || continue
+        pdev=$($BUSYBOX cat "$p/dev")
+        pname=${p##*/}
+        $BUSYBOX mknod -m 660 "/dev/$pname" b "${pdev%:*}" "${pdev#*:}" 2>/dev/null || true
+    done
     [ -e /dev/mmcblk1p1 ] && break
     $BUSYBOX sleep 1
 done
 
 if $BUSYBOX mount -t ext4 -o rw /dev/mmcblk1p1 /mnt/root 2>/dev/null || $BUSYBOX mount /dev/mmcblk1p1 /mnt/root; then
     echo "gta8-init: microSD mounted successfully, switching root to Debian!"
+    
+    # 1. Install debian-init
     $BUSYBOX cp /debian-init /mnt/root/sbin/init 2>/dev/null || true
     $BUSYBOX chmod 755 /mnt/root/sbin/init 2>/dev/null || true
+
+    # 2. Auto-extract tools if missing
+    if [ ! -f /mnt/root/root/hw-up.sh ] && [ -f /tools.tar.gz ]; then
+        echo "gta8-init: auto-deploying tools to /root..."
+        $BUSYBOX mkdir -p /mnt/root/root /mnt/root/etc/udev/rules.d /mnt/root/etc/dpkg/dpkg.cfg.d
+        echo 'path-exclude=/sbin/init' > /mnt/root/etc/dpkg/dpkg.cfg.d/protect-sbin-init
+        $BUSYBOX tar -xzf /tools.tar.gz -C /mnt/root/root/
+        $BUSYBOX cp /mnt/root/root/udev/*.rules /mnt/root/etc/udev/rules.d/ 2>/dev/null || true
+        $BUSYBOX chmod +x /mnt/root/root/*.sh /mnt/root/root/*.py 2>/dev/null || true
+    fi
+
+    # 3. Bind mounts
     $BUSYBOX mkdir -p /mnt/root/proc /mnt/root/sys /mnt/root/dev /mnt/root/dev/pts /mnt/root/run /mnt/root/config
     $BUSYBOX mount -o bind /proc /mnt/root/proc 2>/dev/null || true
     $BUSYBOX mount -o bind /sys /mnt/root/sys 2>/dev/null || true
