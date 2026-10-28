@@ -77,8 +77,13 @@ if [ -d /config/usb_gadget ]; then
     $BUSYBOX mkdir -p "$G/strings/0x409" "$G/functions/acm.gs0" "$G/configs/b.1/strings/0x409" 2>/dev/null || true
     echo 0x1d6b > "$G/idVendor" 2>/dev/null || true
     echo 0x0104 > "$G/idProduct" 2>/dev/null || true
+    echo 0xef > "$G/bDeviceClass" 2>/dev/null || true
+    echo 0x02 > "$G/bDeviceSubClass" 2>/dev/null || true
+    echo 0x01 > "$G/bDeviceProtocol" 2>/dev/null || true
     echo "Galaxy Tab A8 LTE" > "$G/strings/0x409/product" 2>/dev/null || true
     $BUSYBOX ln -sfn "$G/functions/acm.gs0" "$G/configs/b.1/f1" 2>/dev/null || true
+    $BUSYBOX mkdir -p "$G/functions/ncm.usb0" 2>/dev/null || true
+    $BUSYBOX ln -sfn "$G/functions/ncm.usb0" "$G/configs/b.1/f2" 2>/dev/null || true
     echo musb-hdrc.0.auto > "$G/UDC" 2>/dev/null || true
 fi
 $BUSYBOX mknod -m 600 /dev/ttyGS0 c 509 0 2>/dev/null || true
@@ -186,7 +191,7 @@ export HOME=/root
 trap '' HUP INT QUIT TSTP TTIN TTOU
 
 busybox mount -o remount,rw / 2>/dev/null || true
-busybox mkdir -p /dev/pts /dev/shm /run /tmp /dev/dri /config /root/modules
+busybox mkdir -p /dev/pts /dev/shm /run /tmp /dev/dri /config /root/modules /run/systemd/resolve
 busybox mount -t tmpfs -o mode=755,nosuid,nodev tmpfs /run 2>/dev/null || true
 busybox mount -t tmpfs tmpfs /tmp 2>/dev/null || true
 busybox mount -t devpts devpts /dev/pts 2>/dev/null || true

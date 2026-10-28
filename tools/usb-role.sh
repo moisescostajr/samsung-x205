@@ -52,6 +52,9 @@ ensure_gadget_dirs() {
     echo 0x1d6b > "$G/idVendor"
     echo 0x0104 > "$G/idProduct"
     echo 0x0200 > "$G/bcdUSB"
+    echo 0xef > "$G/bDeviceClass"
+    echo 0x02 > "$G/bDeviceSubClass"
+    echo 0x01 > "$G/bDeviceProtocol"
     echo 0123456789abcdef > "$G/strings/0x409/serialnumber"
     echo Droidian > "$G/strings/0x409/manufacturer"
     echo gta8wifi-debug > "$G/strings/0x409/product"
@@ -63,9 +66,15 @@ bind_gadget() {
     ensure_gadget_dirs
     echo disable > "$HOSTEN" 2>/dev/null || true
     set_mode peripheral || true
+    echo 0xef > "$G/bDeviceClass"
+    echo 0x02 > "$G/bDeviceSubClass"
+    echo 0x01 > "$G/bDeviceProtocol"
+    busybox mkdir -p "$G/functions/ncm.usb0" 2>/dev/null
     busybox mkdir -p "$G/functions/ecm.usb0" 2>/dev/null
     busybox mkdir -p "$G/functions/rndis.usb0" 2>/dev/null
-    if [ -d "$G/functions/ecm.usb0" ]; then
+    if [ -d "$G/functions/ncm.usb0" ]; then
+        busybox ln -sfn "$G/functions/ncm.usb0" "$G/configs/b.1/f2"
+    elif [ -d "$G/functions/ecm.usb0" ]; then
         busybox ln -sfn "$G/functions/ecm.usb0" "$G/configs/b.1/f2"
     elif [ -d "$G/functions/rndis.usb0" ]; then
         busybox ln -sfn "$G/functions/rndis.usb0" "$G/configs/b.1/f2"

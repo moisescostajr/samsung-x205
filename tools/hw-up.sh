@@ -101,11 +101,11 @@ log "parts socko=$SOCKO super=$SUPER wcn=$WCN gnss=$GNSS l_modem=$L_MODEM l_ldsp
 
 if [ -n "$SUPER" ]; then
     if busybox grep -q 'androidboot.em.model=SM-X205' /proc/cmdline; then
-        VENDOR_OFF=3952082944
+        VENDOR_OFF=4315938816
     else
         VENDOR_OFF=4281335808
     fi
-    if busybox losetup -o "$VENDOR_OFF" /dev/loop0 "$SUPER" || busybox losetup -o 3952082944 /dev/loop0 "$SUPER" || busybox losetup -o 4281335808 /dev/loop0 "$SUPER"; then
+    if busybox losetup -o "$VENDOR_OFF" /dev/loop0 "$SUPER" || busybox losetup -o 4315938816 /dev/loop0 "$SUPER" || busybox losetup -o 4281335808 /dev/loop0 "$SUPER"; then
         if busybox mount -t ext4 -o ro /dev/loop0 /mnt/vendor; then
             busybox mount --bind /mnt/vendor /vendor
             log vendor_mounted

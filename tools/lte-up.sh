@@ -62,8 +62,8 @@ if ! busybox grep -q " /vendor " /proc/mounts && ! busybox grep -q " /mnt/vendor
         busybox mkdir -p /mnt/vendor /vendor
         busybox mknod /dev/loop0 b 7 0 2>/dev/null || true
         busybox losetup -d /dev/loop0 2>/dev/null || true
-        VENDOR_OFF=3952082944
-        if busybox losetup -o "$VENDOR_OFF" /dev/loop0 "$SUPER" 2>/dev/null || busybox losetup -o 4281335808 /dev/loop0 "$SUPER" 2>/dev/null; then
+        VENDOR_OFF=4315938816
+        if busybox losetup -o "$VENDOR_OFF" /dev/loop0 "$SUPER" 2>/dev/null || busybox losetup -o 4315938816 /dev/loop0 "$SUPER" 2>/dev/null || busybox losetup -o 4281335808 /dev/loop0 "$SUPER" 2>/dev/null; then
             if busybox mount -t ext4 -o ro /dev/loop0 /mnt/vendor 2>/dev/null; then
                 busybox mount --bind /mnt/vendor /vendor 2>/dev/null || true
                 log "vendor partition mounted"
