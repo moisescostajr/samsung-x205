@@ -66,14 +66,40 @@ for root, _, files in os.walk('kernel'):
 echo 'ccflags-y += -I$(src)' >> kernel/drivers/devfreq/sprd/Makefile 2>/dev/null || true
 
 # Patch kernel/module.c: allow vendor modules with mismatched genksyms CRC (GCC vs Clang)
+# and neutralize mod_sysfs_setup crash caused by mismatched vendor ELF section attributes
 python3 -c "
+import re
+
 with open('kernel/kernel/module.c', 'r') as f:
     c = f.read()
+
+# 1. CRC bypass for vendor modules
 if 'if (versions[i].crc == crcval)' in c:
     c = c.replace('if (versions[i].crc == crcval)', 'if (1 || versions[i].crc == crcval)')
-    with open('kernel/kernel/module.c', 'w') as f:
-        f.write(c)
-    print('Patched kernel/module.c to accept vendor module CRCs')
+
+# 2. Prevent kernel crash in mod_sysfs_setup due to vendor module ELF section/attribute mismatch
+pat_setup = re.compile(r'static int mod_sysfs_setup\(struct module \*mod,\s+const struct load_info \*info,\s+struct kernel_param \*kparam,\s+unsigned int num_params\)\s*\{.*?\n\}', re.DOTALL)
+c = pat_setup.sub('''static int mod_sysfs_setup(struct module *mod,
+			   const struct load_info *info,
+			   struct kernel_param *kparam,
+			   unsigned int num_params)
+{
+	return 0;
+}''', c)
+
+pat_fini = re.compile(r'static void mod_sysfs_fini\(struct module \*mod\)\s*\{.*?\n\}', re.DOTALL)
+c = pat_fini.sub('''static void mod_sysfs_fini(struct module *mod)
+{
+}''', c)
+
+pat_tear = re.compile(r'static void mod_sysfs_teardown\(struct module \*mod\)\s*\{.*?\n\}', re.DOTALL)
+c = pat_tear.sub('''static void mod_sysfs_teardown(struct module *mod)
+{
+}''', c)
+
+with open('kernel/kernel/module.c', 'w') as f:
+    f.write(c)
+print('Patched kernel/module.c: bypassed CRC and neutralized mod_sysfs_setup crash')
 "
 
 # Patch drivers/misc/sprdwcn/wcn_bus.c: export missing symbols for sprdwl_ng.ko Wi-Fi
