@@ -20,9 +20,9 @@ if [ "$CONNECTED" -eq 1 ]; then
     log "Internet connectivity established! Updating APT package cache..."
     export DEBIAN_FRONTEND=noninteractive
     apt-get update >> "$LOG" 2>&1
-    log "Installing Phosh, Phoc, Squeekboard, Seatd, and NetworkManager..."
+    log "Installing Phosh, Phoc, Squeekboard, Seatd, and network-manager..."
     apt-get install -y --no-install-recommends \
-        phosh phoc squeekboard weston seatd dropbear NetworkManager modemmanager >> "$LOG" 2>&1
+        phosh phoc squeekboard weston seatd dropbear network-manager modemmanager >> "$LOG" 2>&1
     log "Desktop packages installed successfully! Starting Phosh..."
     if [ -x /root/start-phosh.sh ]; then
         busybox sh /root/start-phosh.sh >> /root/phosh-boot.log 2>&1 &
