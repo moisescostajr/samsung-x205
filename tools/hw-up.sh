@@ -195,6 +195,9 @@ if [ -e /sys/class/net/wlan0 ]; then
         : > /run/gta8-wifi-manual
         busybox killall NetworkManager 2>/dev/null
         busybox mkdir -p /run/wpa_supplicant /usr/share/udhcpc
+        if [ -f /root/wpa_supplicant.conf ]; then
+            busybox cp -f /root/wpa_supplicant.conf /etc/wpa_supplicant.conf 2>/dev/null || true
+        fi
         busybox grep -q p2p_disabled /etc/wpa_supplicant.conf 2>/dev/null \
             || busybox sed -i '2ap2p_disabled=1' /etc/wpa_supplicant.conf
         # -B daemonize exits immediately on this image; setsid keeps it running.

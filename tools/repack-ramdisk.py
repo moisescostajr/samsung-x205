@@ -246,7 +246,7 @@ fi
 busybox dmesg > /root/dmesg.txt 2>/dev/null || true
 
 # Deploy custom Wi-Fi config if present
-if [ -f /root/wpa_supplicant.conf ] && [ ! -f /etc/wpa_supplicant.conf ]; then
+if [ -f /root/wpa_supplicant.conf ]; then
     busybox cp -f /root/wpa_supplicant.conf /etc/wpa_supplicant.conf 2>/dev/null || true
 fi
 
