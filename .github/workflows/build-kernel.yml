@@ -17,16 +17,11 @@ jobs:
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
-          sudo dpkg --add-architecture arm64
           sudo apt-get update -y
           sudo apt-get install -y --no-install-recommends \
             build-essential bc bison flex libssl-dev libelf-dev pkg-config \
             gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
-            python3 python3-pil cpio lz4 gzip tar wget rsync \
-            libdrm-dev:arm64 || sudo apt-get install -y --no-install-recommends \
-            build-essential bc bison flex libssl-dev libelf-dev pkg-config \
-            gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
-            python3 python3-pil cpio lz4 gzip tar wget rsync libdrm-dev
+            python3 python3-pil cpio lz4 gzip tar wget rsync
 
       - name: Build Kernel and Boot Pack
         run: |

@@ -121,15 +121,23 @@ cp -f tools/dmaheap/*.ko boot-pack/modules/ 2>/dev/null || true
 cp -f tools/dmaheap/*.ko tools/modules/ 2>/dev/null || true
 
 echo "=== 5b. Compiling drmstep bootsplash ==="
-mkdir -p boot-pack/opt/kmsbin tools/opt/kmsbin
+mkdir -p libdrm_temp boot-pack/opt/kmsbin tools/opt/kmsbin
+wget -q -O libdrm_temp/libdrm2.deb "http://ports.ubuntu.com/pool/main/libd/libdrm/libdrm2_2.4.113-2~ubuntu0.22.04.1_arm64.deb" || true
+wget -q -O libdrm_temp/libdrm-dev.deb "http://ports.ubuntu.com/pool/main/libd/libdrm/libdrm-dev_2.4.113-2~ubuntu0.22.04.1_arm64.deb" || true
+
+dpkg-deb -x libdrm_temp/libdrm2.deb libdrm_temp/root 2>/dev/null || true
+dpkg-deb -x libdrm_temp/libdrm-dev.deb libdrm_temp/root 2>/dev/null || true
+
 aarch64-linux-gnu-gcc -O2 -Wall tools/drmstep.c \
-    -I/usr/include/libdrm -I/usr/include/aarch64-linux-gnu/libdrm \
-    -L/usr/lib/aarch64-linux-gnu \
+    -Ilibdrm_temp/root/usr/include \
+    -Ilibdrm_temp/root/usr/include/libdrm \
+    -Llibdrm_temp/root/usr/lib/aarch64-linux-gnu \
     -ldrm -Wl,-rpath,/lib:/usr/lib \
     -o boot-pack/drmstep-fb2 2>/dev/null || \
 aarch64-linux-gnu-gcc -static -O2 -Wall tools/drmstep.c \
-    -I/usr/include/libdrm -I/usr/include/aarch64-linux-gnu/libdrm \
-    -L/usr/lib/aarch64-linux-gnu \
+    -Ilibdrm_temp/root/usr/include \
+    -Ilibdrm_temp/root/usr/include/libdrm \
+    -Llibdrm_temp/root/usr/lib/aarch64-linux-gnu \
     -ldrm \
     -o boot-pack/drmstep-fb2 2>/dev/null || true
 
@@ -153,7 +161,13 @@ cp -f boot-pack/drmstep-fb2 tools/drmstep-fb2 2>/dev/null || true
 cp -f boot-pack/splash.bgra tools/splash.bgra 2>/dev/null || true
 
 echo "=== 6. Building Ramdisk ==="
-mkdir -p ramdisk_root/bin ramdisk_root/sbin ramdisk_root/dev ramdisk_root/proc ramdisk_root/sys ramdisk_root/mnt/root ramdisk_root/tmp ramdisk_root/config ramdisk_root/modules
+mkdir -p ramdisk_root/bin ramdisk_root/sbin ramdisk_root/dev ramdisk_root/proc ramdisk_root/sys ramdisk_root/mnt/root ramdisk_root/tmp ramdisk_root/config ramdisk_root/modules ramdisk_root/lib ramdisk_root/usr/lib
+
+if [ -d libdrm_temp/root/usr/lib/aarch64-linux-gnu ]; then
+    cp -P libdrm_temp/root/usr/lib/aarch64-linux-gnu/libdrm.so* ramdisk_root/lib/ 2>/dev/null || true
+    cp -P libdrm_temp/root/usr/lib/aarch64-linux-gnu/libdrm.so* ramdisk_root/usr/lib/ 2>/dev/null || true
+fi
+rm -rf libdrm_temp
 
 wget -q -O busybox.deb http://ports.ubuntu.com/pool/main/b/busybox/busybox-static_1.30.1-7ubuntu3_arm64.deb
 dpkg-deb -x busybox.deb bb_temp
