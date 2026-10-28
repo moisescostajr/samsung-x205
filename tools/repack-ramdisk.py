@@ -353,14 +353,14 @@ def main():
         print(f"Ramdisk created successfully ({cpio_gz_dest.stat().st_size} bytes)")
 
     # 6. Repack boot.img and Odin tar
-    print("Repacking AP-boot-only-debug-x205-v57.tar...")
+    print("Repacking AP-boot-only-debug-x205-v57.tar and v58.tar...")
     pack_script = TOOLS_DIR / "pack-x205.py"
     res = subprocess.run([sys.executable, str(pack_script)], capture_output=True, text=True)
     print(res.stdout)
     if res.returncode != 0:
         raise SystemExit(f"pack-x205.py failed: {res.stderr}")
 
-    out_tar = BOOT_PACK / "AP-boot-only-debug-x205-v57.tar"
+    out_tar = BOOT_PACK / "AP-boot-only-debug-x205-v58.tar"
     print(f"[OK] Done! {out_tar} ({out_tar.stat().st_size} bytes)")
 
 

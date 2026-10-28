@@ -12,7 +12,7 @@ Inputs (override with env):
   GTA8LTE_BOOT_PACK    output directory
 """
 from pathlib import Path
-import gzip, hashlib, os, struct, tarfile, tempfile
+import gzip, hashlib, os, shutil, struct, tarfile, tempfile
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -45,6 +45,7 @@ kernel_path = WIFI_PACK / "Image-v57"
 donor_path = WIFI_PACK / "boot-gta8wifi-debug-v57.img"
 out_img = OUT_PACK / "boot-gta8lte-debug-v57.img"
 out_tar = OUT_PACK / "AP-boot-only-debug-x205-v57.tar"
+out_tar_v58 = OUT_PACK / "AP-boot-only-debug-x205-v58.tar"
 
 DT_MAGIC = bytes.fromhex("d7b7ab1e")
 
@@ -156,6 +157,7 @@ def main():
         with open(boot, "rb") as f:
             tf.addfile(ti, f)
     os.system(f'xattr -c "{out_tar}" 2>/dev/null')
+    shutil.copy2(out_tar, out_tar_v58)
 
     print(f"stock {STOCK_BOOT} ({part_size} bytes)")
     print(f"kernel {len(kernel)} ramdisk {len(ramdisk)} dt {len(dt)}")
