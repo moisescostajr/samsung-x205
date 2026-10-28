@@ -76,6 +76,30 @@ if 'if (versions[i].crc == crcval)' in c:
     print('Patched kernel/module.c to accept vendor module CRCs')
 "
 
+# Patch drivers/misc/sprdwcn/wcn_bus.c: export missing symbols for sprdwl_ng.ko Wi-Fi
+python3 -c "
+with open('kernel/drivers/misc/sprdwcn/wcn_bus.c', 'r') as f:
+    c = f.read()
+if 'sprd_wlan_power_status_sync' not in c:
+    c += '''
+
+int sprd_wlan_power_status_sync(int status)
+{
+	return 0;
+}
+EXPORT_SYMBOL_GPL(sprd_wlan_power_status_sync);
+
+int marlin_get_wcn_xpe_efuse_data(void *data, int size)
+{
+	return 0;
+}
+EXPORT_SYMBOL_GPL(marlin_get_wcn_xpe_efuse_data);
+'''
+    with open('kernel/drivers/misc/sprdwcn/wcn_bus.c', 'w') as f:
+        f.write(c)
+    print('Exported sprd_wlan_power_status_sync and marlin_get_wcn_xpe_efuse_data in wcn_bus.c')
+"
+
 # Ensure KBUILD_CFLAGS silences GCC 11 warning-errors
 echo 'KBUILD_CFLAGS += -Wno-error -Wno-strict-prototypes -Wno-format-zero-length -Wno-pointer-sign -Wno-array-bounds' >> kernel/Makefile
 
@@ -146,13 +170,11 @@ if [ -d "$LIBDIR" ]; then
 fi
 
 aarch64-linux-gnu-gcc -O2 -Wall tools/drmstep.c \
-    -Ilibdrm_temp/root/usr/include \
     -Ilibdrm_temp/root/usr/include/libdrm \
     -Llibdrm_temp/root/usr/lib/aarch64-linux-gnu \
     -ldrm -Wl,-rpath,/lib:/usr/lib \
     -o boot-pack/drmstep-fb2 || \
 aarch64-linux-gnu-gcc -static -O2 -Wall tools/drmstep.c \
-    -Ilibdrm_temp/root/usr/include \
     -Ilibdrm_temp/root/usr/include/libdrm \
     -Llibdrm_temp/root/usr/lib/aarch64-linux-gnu \
     -ldrm \

@@ -16,6 +16,12 @@ log() { echo "gta8-gpu [$(busybox cut -d. -f1 /proc/uptime)s]: $*" >> "$LOG"; }
 
 log START
 
+if [ -f /root/gpu-disable ]; then
+    log "GPU explicitly disabled by /root/gpu-disable (using safe pixman software renderer)"
+    log DONE
+    exit 0
+fi
+
 mknod_from_sys() {
     node=$1
     sysdev=$2

@@ -41,10 +41,9 @@ fi
 udevadm trigger --action=add --subsystem-match=net >/dev/null 2>&1
 udevadm settle --timeout=5 >/dev/null 2>&1
 
-# v57 ramdisk still pins USB-C as a gadget. Release the UDC so a pad can
-# enumerate; /root/usb-role.sh gadget brings ACM+RNDIS back if needed.
+# Keep USB-C as ACM+RNDIS gadget so Mac terminal remains permanently connected
 if [ -x /root/usb-role.sh ]; then
-    busybox sh /root/usb-role.sh auto >> /root/usb-role.log 2>&1
+    busybox sh /root/usb-role.sh gadget >> /root/usb-role.log 2>&1
 fi
 
 # System bus is required for NetworkManager / Settings Wi-Fi. Test the bus
