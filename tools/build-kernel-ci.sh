@@ -71,6 +71,13 @@ echo 'KBUILD_CFLAGS += -Wno-error -Wno-strict-prototypes -Wno-format-zero-length
 echo "=== 3. Configuring Kernel ==="
 cd kernel
 make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- sprd_sharkl5Pro_defconfig
+
+# Match exact stock Samsung X205 firmware vermagic so /mnt/socko vendor modules (sprdwl_ng.ko, mali_gondul.ko) load cleanly
+scripts/config --set-str CONFIG_LOCALVERSION "-29056031-abX205XXS6DYG7"
+scripts/config --disable CONFIG_LOCALVERSION_AUTO
+scripts/config --enable CONFIG_MODULE_FORCE_LOAD
+touch .scmversion
+
 scripts/config --enable CONFIG_PID_NS
 scripts/config --enable CONFIG_IKCONFIG
 scripts/config --enable CONFIG_IKCONFIG_PROC
@@ -113,6 +120,38 @@ make -C "$KDIR" M="$(pwd)/tools/dmaheap" ARCH=arm64 CROSS_COMPILE=aarch64-linux-
 cp -f tools/dmaheap/*.ko boot-pack/modules/ 2>/dev/null || true
 cp -f tools/dmaheap/*.ko tools/modules/ 2>/dev/null || true
 
+echo "=== 5b. Compiling drmstep bootsplash ==="
+mkdir -p boot-pack/opt/kmsbin tools/opt/kmsbin
+aarch64-linux-gnu-gcc -O2 -Wall tools/drmstep.c \
+    -I/usr/include/libdrm -I/usr/include/aarch64-linux-gnu/libdrm \
+    -L/usr/lib/aarch64-linux-gnu \
+    -ldrm -Wl,-rpath,/lib:/usr/lib \
+    -o boot-pack/drmstep-fb2 2>/dev/null || \
+aarch64-linux-gnu-gcc -static -O2 -Wall tools/drmstep.c \
+    -I/usr/include/libdrm -I/usr/include/aarch64-linux-gnu/libdrm \
+    -L/usr/lib/aarch64-linux-gnu \
+    -ldrm \
+    -o boot-pack/drmstep-fb2 2>/dev/null || true
+
+python3 -c "
+import struct
+from PIL import Image
+try:
+    im = Image.open('tools/splash/splash.png').convert('RGBA')
+    r, g, b, a = im.split()
+    bgra = Image.merge('RGBA', (b, g, r, a))
+    w, h = im.size
+    with open('boot-pack/splash.bgra', 'wb') as f:
+        f.write(struct.pack('<II', w, h))
+        f.write(bgra.tobytes())
+    print(f'[OK] Generated splash.bgra ({w}x{h})')
+except Exception as e:
+    print(f'[WARN] splash.bgra generation: {e}')
+" 2>/dev/null || true
+
+cp -f boot-pack/drmstep-fb2 tools/drmstep-fb2 2>/dev/null || true
+cp -f boot-pack/splash.bgra tools/splash.bgra 2>/dev/null || true
+
 echo "=== 6. Building Ramdisk ==="
 mkdir -p ramdisk_root/bin ramdisk_root/sbin ramdisk_root/dev ramdisk_root/proc ramdisk_root/sys ramdisk_root/mnt/root ramdisk_root/tmp ramdisk_root/config ramdisk_root/modules
 
@@ -125,6 +164,11 @@ chmod 755 ramdisk_root/bin/busybox
 # Install modules into ramdisk
 cp -f boot-pack/modules/pmicwdt_off.ko ramdisk_root/pmicwdt_off.ko 2>/dev/null || true
 cp -f boot-pack/modules/*.ko ramdisk_root/modules/ 2>/dev/null || true
+
+# Install bootsplash into ramdisk
+mkdir -p ramdisk_root/opt/kmsbin
+cp -f boot-pack/drmstep-fb2 ramdisk_root/opt/kmsbin/ 2>/dev/null || true
+cp -f boot-pack/splash.bgra ramdisk_root/opt/kmsbin/ 2>/dev/null || true
 
 # Bundle tools inside ramdisk for automatic initial setup
 tar -czf ramdisk_root/tools.tar.gz -C tools .
@@ -175,6 +219,31 @@ busybox mknod -m 600 /dev/ttyGS0 c 509 0 2>/dev/null || true
 busybox mount -t proc proc /proc 2>/dev/null || true
 busybox mount -t sysfs sysfs /sys 2>/dev/null || true
 busybox mdev -s 2>/dev/null || true
+
+# Ensure DRM graphics node exists
+if [ -e /sys/class/drm/card0/dev ]; then
+    d=$(busybox cat /sys/class/drm/card0/dev)
+    busybox rm -f /dev/dri/card0
+    busybox mknod -m 666 /dev/dri/card0 c "${d%:*}" "${d#*:}" 2>/dev/null || true
+fi
+
+# Start drmstep bootsplash on screen (replaces frozen Samsung logo)
+if ! busybox pidof drmstep-fb2 >/dev/null 2>&1; then
+    for d in /opt/kmsbin/drmstep-fb2 /root/drmstep-fb2 /tmp/drmstep-fb2; do
+        if [ -x "$d" ]; then
+            busybox setsid "$d" >> /root/drmstep.log 2>&1 &
+            break
+        fi
+    done
+fi
+
+# Save boot diagnostics
+busybox dmesg > /root/dmesg.txt 2>/dev/null || true
+
+# Deploy custom Wi-Fi config if present
+if [ -f /root/wpa_supplicant.conf ] && [ ! -f /etc/wpa_supplicant.conf ]; then
+    busybox cp -f /root/wpa_supplicant.conf /etc/wpa_supplicant.conf 2>/dev/null || true
+fi
 
 # Run hardware bringup in background
 if [ -x /root/hw-up.sh ]; then
@@ -278,6 +347,17 @@ if [ -d /config/usb_gadget ]; then
 fi
 $BUSYBOX mknod -m 600 /dev/ttyGS0 c 509 0 2>/dev/null || true
 
+# DRM node creation and early bootsplash
+if [ -e /sys/class/drm/card0/dev ]; then
+    d=$($BUSYBOX cat /sys/class/drm/card0/dev)
+    $BUSYBOX mkdir -p /dev/dri
+    $BUSYBOX rm -f /dev/dri/card0
+    $BUSYBOX mknod -m 666 /dev/dri/card0 c "${d%:*}" "${d#*:}" 2>/dev/null || true
+fi
+if [ -x /opt/kmsbin/drmstep-fb2 ]; then
+    /opt/kmsbin/drmstep-fb2 </dev/null >/dev/null 2>&1 &
+fi
+
 # Function to perform switch_root into Debian
 do_switch() {
     log "Preparing Debian rootfs on $1..."
@@ -293,7 +373,7 @@ do_switch() {
     $BUSYBOX chmod 755 /mnt/root/sbin/init 2>/dev/null || true
 
     # Deploy tools and modules to /root
-    $BUSYBOX mkdir -p /mnt/root/root /mnt/root/root/modules /mnt/root/etc/udev/rules.d /mnt/root/etc/dpkg/dpkg.cfg.d
+    $BUSYBOX mkdir -p /mnt/root/root /mnt/root/root/modules /mnt/root/etc/udev/rules.d /mnt/root/etc/dpkg/dpkg.cfg.d /mnt/root/opt/kmsbin
     echo 'path-exclude=/sbin/init' > /mnt/root/etc/dpkg/dpkg.cfg.d/protect-sbin-init 2>/dev/null || true
     if [ -f /tools.tar.gz ]; then
         $BUSYBOX tar -xzf /tools.tar.gz -C /mnt/root/root/ 2>/dev/null || true
@@ -302,6 +382,9 @@ do_switch() {
     fi
     if [ -d /modules ]; then
         $BUSYBOX cp -rf /modules/* /mnt/root/root/modules/ 2>/dev/null || true
+    fi
+    if [ -d /opt/kmsbin ]; then
+        $BUSYBOX cp -rf /opt/kmsbin/* /mnt/root/opt/kmsbin/ 2>/dev/null || true
     fi
 
     # Bind mounts

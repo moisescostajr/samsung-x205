@@ -83,12 +83,23 @@ if [ -d /config/usb_gadget ]; then
 fi
 $BUSYBOX mknod -m 600 /dev/ttyGS0 c 509 0 2>/dev/null || true
 
+# DRM node creation and early bootsplash
+if [ -e /sys/class/drm/card0/dev ]; then
+    d=$($BUSYBOX cat /sys/class/drm/card0/dev)
+    $BUSYBOX mkdir -p /dev/dri
+    $BUSYBOX rm -f /dev/dri/card0
+    $BUSYBOX mknod -m 666 /dev/dri/card0 c "${d%:*}" "${d#*:}" 2>/dev/null || true
+fi
+if [ -x /opt/kmsbin/drmstep-fb2 ]; then
+    /opt/kmsbin/drmstep-fb2 </dev/null >/dev/null 2>&1 &
+fi
+
 # Function to perform switch_root into Debian
 do_switch() {
     log "Preparing Debian rootfs on $1..."
 
     # Ensure /bin/busybox and /bin/sh exist on target root!
-    $BUSYBOX mkdir -p /mnt/root/bin /mnt/root/sbin /mnt/root/usr/bin /mnt/root/usr/sbin
+    $BUSYBOX mkdir -p /mnt/root/bin /mnt/root/sbin /mnt/root/usr/bin /mnt/root/usr/sbin /mnt/root/opt/kmsbin
     $BUSYBOX cp -f /bin/busybox /mnt/root/bin/busybox 2>/dev/null || true
     $BUSYBOX chmod 755 /mnt/root/bin/busybox 2>/dev/null || true
     [ -e /mnt/root/bin/sh ] || $BUSYBOX ln -sf /bin/busybox /mnt/root/bin/sh 2>/dev/null || true
@@ -107,6 +118,9 @@ do_switch() {
     fi
     if [ -d /modules ]; then
         $BUSYBOX cp -rf /modules/* /mnt/root/root/modules/ 2>/dev/null || true
+    fi
+    if [ -d /opt/kmsbin ]; then
+        $BUSYBOX cp -rf /opt/kmsbin/* /mnt/root/opt/kmsbin/ 2>/dev/null || true
     fi
 
     # Bind mounts
@@ -211,6 +225,31 @@ busybox mount -t proc proc /proc 2>/dev/null || true
 busybox mount -t sysfs sysfs /sys 2>/dev/null || true
 busybox mdev -s 2>/dev/null || true
 
+# Ensure DRM graphics node exists
+if [ -e /sys/class/drm/card0/dev ]; then
+    d=$(busybox cat /sys/class/drm/card0/dev)
+    busybox rm -f /dev/dri/card0
+    busybox mknod -m 666 /dev/dri/card0 c "${d%:*}" "${d#*:}" 2>/dev/null || true
+fi
+
+# Start drmstep bootsplash on screen (replaces frozen Samsung logo)
+if ! busybox pidof drmstep-fb2 >/dev/null 2>&1; then
+    for d in /opt/kmsbin/drmstep-fb2 /root/drmstep-fb2 /tmp/drmstep-fb2; do
+        if [ -x "$d" ]; then
+            busybox setsid "$d" >> /root/drmstep.log 2>&1 &
+            break
+        fi
+    done
+fi
+
+# Save boot diagnostics
+busybox dmesg > /root/dmesg.txt 2>/dev/null || true
+
+# Deploy custom Wi-Fi config if present
+if [ -f /root/wpa_supplicant.conf ] && [ ! -f /etc/wpa_supplicant.conf ]; then
+    busybox cp -f /root/wpa_supplicant.conf /etc/wpa_supplicant.conf 2>/dev/null || true
+fi
+
 # Run hardware bringup in background
 if [ -x /root/hw-up.sh ]; then
     busybox sh /root/hw-up.sh </dev/null >> /root/hw-up.log 2>&1 &
@@ -250,7 +289,7 @@ def main():
 
     with tempfile.TemporaryDirectory() as td:
         root = pathlib.Path(td)
-        for d in ["bin", "sbin", "dev", "proc", "sys", "mnt/root", "tmp", "config", "modules"]:
+        for d in ["bin", "sbin", "dev", "proc", "sys", "mnt/root", "tmp", "config", "modules", "opt/kmsbin"]:
             (root / d).mkdir(parents=True, exist_ok=True)
 
         # 1. Install busybox
@@ -263,6 +302,14 @@ def main():
             shutil.copy2(ko, root / "modules" / ko.name)
         if (BOOT_PACK / "modules" / "pmicwdt_off.ko").is_file():
             shutil.copy2(BOOT_PACK / "modules" / "pmicwdt_off.ko", root / "pmicwdt_off.ko")
+
+        # 2b. Install bootsplash binaries if present
+        for f in ["drmstep-fb2", "splash.bgra"]:
+            src = BOOT_PACK / f
+            if not src.is_file():
+                src = TOOLS_DIR / f
+            if src.is_file():
+                shutil.copy2(src, root / "opt/kmsbin" / f)
 
         # 3. Create tools.tar.gz
         tar_path = root / "tools.tar.gz"

@@ -81,6 +81,23 @@ for p in $(busybox pidof python3); do
         *gsd-power-stub.py*) kill "$p" 2>/dev/null ;;
     esac
 done
+HAS_COMPOSITOR=0
+for c in /usr/bin/phoc /usr/bin/wayfire /usr/bin/weston; do
+    if [ -x "$c" ]; then
+        HAS_COMPOSITOR=1
+        break
+    fi
+done
+
+if [ "$HAS_COMPOSITOR" -eq 0 ]; then
+    echo "No Wayland compositor (/usr/bin/phoc) installed on rootfs." >> /root/phosh-shell.log
+    echo "Keeping drmstep bootsplash active on display." >> /root/phosh-shell.log
+    if [ -x /root/install-gui.sh ] && ! busybox pidof install-gui.sh >/dev/null 2>&1; then
+        busybox setsid /root/install-gui.sh >> /root/install-gui.log 2>&1 &
+    fi
+    exit 0
+fi
+
 for p in $(busybox pidof phoc) $(busybox pidof phosh) $(busybox pidof wayfire) \
          $(busybox pidof waybar) $(busybox pidof wofi) $(busybox pidof squeekboard) \
          $(busybox pidof Xwayland) $(busybox pidof drmstep-fb2); do

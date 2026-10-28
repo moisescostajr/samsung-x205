@@ -29,8 +29,11 @@ mknod_from_sys() {
 
 if ! busybox lsmod | busybox grep -q "^mali_gondul "; then
     if [ -f /mnt/socko/mali_gondul.ko ]; then
-        insmod /mnt/socko/mali_gondul.ko >>"$LOG" 2>&1 && log mali_insmod_ok \
-            || log mali_insmod_fail
+        if insmod /mnt/socko/mali_gondul.ko >>"$LOG" 2>&1 || insmod -f /mnt/socko/mali_gondul.ko >>"$LOG" 2>&1; then
+            log mali_insmod_ok
+        else
+            log mali_insmod_fail
+        fi
         busybox sleep 1
     else
         log no_mali_ko

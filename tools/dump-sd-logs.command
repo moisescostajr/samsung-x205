@@ -1,6 +1,14 @@
 #!/bin/bash
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-DISK="${GTA8_SD_DISK:-/dev/rdisk6s1}"
+DISK="${GTA8_SD_DISK}"
+if [ -z "$DISK" ]; then
+    DETECTED=$(diskutil list external physical 2>/dev/null | grep -E "disk[0-9]+s[0-9]+" | awk '{print $NF}' | tail -1)
+    if [ -n "$DETECTED" ]; then
+        DISK="/dev/r$DETECTED"
+    else
+        DISK="/dev/rdisk7s1"
+    fi
+fi
 OUT="${GTA8_SD_LOGS:-$ROOT/sd-logs}"
 exec > >(tee /tmp/gta8-sd-dump.log) 2>&1
 set -x

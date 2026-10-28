@@ -1,6 +1,8 @@
 .DS_Store
 boot-pack/
 stock/
+rootfs/
+sd-logs/
 *.o
 *.ko
 *.tar
@@ -8,3 +10,4 @@ stock/
 *.zip
 *.log
 tools/busybox-arm64
+tools/wpa_supplicant.conf

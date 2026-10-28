@@ -154,7 +154,11 @@ else
 fi
 busybox sleep 5
 
-busybox insmod /mnt/socko/sprdwl_ng.ko 2>>/root/hw-up.log && log sprdwl_ok || log sprdwl_fail
+if busybox insmod /mnt/socko/sprdwl_ng.ko 2>>/root/hw-up.log || busybox insmod -f /mnt/socko/sprdwl_ng.ko 2>>/root/hw-up.log; then
+    log sprdwl_ok
+else
+    log sprdwl_fail
+fi
 busybox sleep 2
 log "ifaces=$(busybox ls /sys/class/net 2>/dev/null | busybox tr '\n' ' ')"
 
