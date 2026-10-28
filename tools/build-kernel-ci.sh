@@ -74,17 +74,18 @@ with open('kernel/kernel/module.c', 'r') as f:
     c = f.read()
 
 # 1. CRC & Vermagic bypass for vendor modules (mali_gondul.ko, sprdwl_ng.ko)
-pat_ver = re.compile(r'static int check_version\(const struct load_info \*info,.*?\{.*?\n\}', re.DOTALL)
+pat_ver = re.compile(r'static (?:inline )?int check_version\(const struct load_info \*info,\s+const char \*symname,\s+struct module \*mod,\s+const s32 \*crc\)\s*\{.*?\n\}', re.DOTALL)
 c = pat_ver.sub('''static int check_version(const struct load_info *info,
-			 const struct kernel_symbol *sym,
-			 void *crc)
+			 const char *symname,
+			 struct module *mod,
+			 const s32 *crc)
 {
 	return 1;
 }''', c)
 
-pat_magic = re.compile(r'static int same_magic\(const char \*amagic, const char \*bmagic,.*?\{.*?\n\}', re.DOTALL)
-c = pat_magic.sub('''static int same_magic(const char *amagic, const char *bmagic,
-		      bool has_crcs)
+pat_magic = re.compile(r'static (?:inline )?int same_magic\(const char \*amagic,\s+const char \*bmagic,\s+bool has_crcs\)\s*\{.*?\n\}', re.DOTALL)
+c = pat_magic.sub('''static inline int same_magic(const char *amagic, const char *bmagic,
+			     bool has_crcs)
 {
 	return 1;
 }''', c)
@@ -114,24 +115,23 @@ with open('kernel/kernel/module.c', 'w') as f:
 print('Patched kernel/module.c: bypassed CRC/vermagic and neutralized mod_sysfs_setup crash')
 "
 
-# Patch kernel/arch/arm64/lib/strlen.S: add safety guard to __pi_strlen / strlen against NULL or invalid low addresses
+# Patch kernel/arch/arm64/lib/strlen.S: add safety guard to WEAK(strlen) / __pi_strlen against NULL or invalid low addresses
 python3 -c "
 with open('kernel/arch/arm64/lib/strlen.S', 'r') as f:
     s = f.read()
 
 if '.Lsafe_strlen_entry' not in s:
-    s = s.replace('ENTRY(__pi_strlen)', '''ENTRY(__pi_strlen)
-	cmp	x0, #0x1000
+    s = s.replace('WEAK(strlen)', '''WEAK(strlen)
+	cmp	srcin, #0x1000
 	b.lo	.Lsafe_strlen_entry
 ''')
-    s += '''
-.Lsafe_strlen_entry:
-	mov	x0, #0
+    s = s.replace('ENDPIPROC(strlen)', '''.Lsafe_strlen_entry:
+	mov	len, #0
 	ret
-'''
+ENDPIPROC(strlen)''')
     with open('kernel/arch/arm64/lib/strlen.S', 'w') as f:
         f.write(s)
-    print('Patched kernel/arch/arm64/lib/strlen.S: guarded __pi_strlen against page zero faults')
+    print('Patched kernel/arch/arm64/lib/strlen.S: guarded strlen against page zero faults')
 "
 
 # Patch drivers/misc/sprdwcn/wcn_bus.c: export missing symbols for sprdwl_ng.ko Wi-Fi
