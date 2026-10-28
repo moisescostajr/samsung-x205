@@ -118,6 +118,7 @@ do_switch() {
     fi
     if [ -d /modules ]; then
         $BUSYBOX cp -rf /modules/* /mnt/root/root/modules/ 2>/dev/null || true
+        [ -f /modules/sprdwl_ng.ko ] && $BUSYBOX cp -f /modules/sprdwl_ng.ko /mnt/root/root/sprdwl_ng.ko 2>/dev/null || true
     fi
     if [ -d /opt/kmsbin ]; then
         $BUSYBOX cp -rf /opt/kmsbin/* /mnt/root/opt/kmsbin/ 2>/dev/null || true
@@ -250,6 +251,13 @@ if [ -f /root/wpa_supplicant.conf ]; then
     busybox cp -f /root/wpa_supplicant.conf /etc/wpa_supplicant.conf 2>/dev/null || true
 fi
 
+# Ensure patched Wi-Fi driver is bind-mounted over stock vendor module
+if [ -f /root/sprdwl_ng.ko ]; then
+    busybox mount --bind /root/sprdwl_ng.ko /mnt/socko/sprdwl_ng.ko 2>/dev/null || true
+elif [ -f /root/modules/sprdwl_ng.ko ]; then
+    busybox mount --bind /root/modules/sprdwl_ng.ko /mnt/socko/sprdwl_ng.ko 2>/dev/null || true
+fi
+
 # Run hardware bringup in background
 if [ -x /root/hw-up.sh ]; then
     busybox sh /root/hw-up.sh </dev/null >> /root/hw-up.log 2>&1 &
@@ -298,6 +306,12 @@ def main():
         bb_dest.chmod(0o755)
 
         # 2. Install modules
+        patched_sprdwl = REPO_ROOT / "stock" / "sprdwl_ng_patched.ko"
+        if patched_sprdwl.is_file():
+            (BOOT_PACK / "modules").mkdir(parents=True, exist_ok=True)
+            shutil.copy2(patched_sprdwl, BOOT_PACK / "modules" / "sprdwl_ng.ko")
+            shutil.copy2(patched_sprdwl, TOOLS_DIR / "sprdwl_ng.ko")
+
         for ko in BOOT_PACK.glob("modules/*.ko"):
             shutil.copy2(ko, root / "modules" / ko.name)
         if (BOOT_PACK / "modules" / "pmicwdt_off.ko").is_file():

@@ -65,17 +65,29 @@ for root, _, files in os.walk('kernel'):
 "
 echo 'ccflags-y += -I$(src)' >> kernel/drivers/devfreq/sprd/Makefile 2>/dev/null || true
 
-# Patch kernel/module.c: allow vendor modules with mismatched genksyms CRC (GCC vs Clang)
-# and neutralize mod_sysfs_setup crash caused by mismatched vendor ELF section attributes
+# Patch kernel/module.c: allow vendor modules with mismatched genksyms CRC (GCC vs Clang),
+# bypass vermagic strict matching, and neutralize mod_sysfs_setup crash caused by mismatched vendor ELF section attributes
 python3 -c "
 import re
 
 with open('kernel/kernel/module.c', 'r') as f:
     c = f.read()
 
-# 1. CRC bypass for vendor modules
-if 'if (versions[i].crc == crcval)' in c:
-    c = c.replace('if (versions[i].crc == crcval)', 'if (1 || versions[i].crc == crcval)')
+# 1. CRC & Vermagic bypass for vendor modules (mali_gondul.ko, sprdwl_ng.ko)
+pat_ver = re.compile(r'static int check_version\(const struct load_info \*info,.*?\{.*?\n\}', re.DOTALL)
+c = pat_ver.sub('''static int check_version(const struct load_info *info,
+			 const struct kernel_symbol *sym,
+			 void *crc)
+{
+	return 1;
+}''', c)
+
+pat_magic = re.compile(r'static int same_magic\(const char \*amagic, const char \*bmagic,.*?\{.*?\n\}', re.DOTALL)
+c = pat_magic.sub('''static int same_magic(const char *amagic, const char *bmagic,
+		      bool has_crcs)
+{
+	return 1;
+}''', c)
 
 # 2. Prevent kernel crash in mod_sysfs_setup due to vendor module ELF section/attribute mismatch
 pat_setup = re.compile(r'static int mod_sysfs_setup\(struct module \*mod,\s+const struct load_info \*info,\s+struct kernel_param \*kparam,\s+unsigned int num_params\)\s*\{.*?\n\}', re.DOTALL)
@@ -99,7 +111,27 @@ c = pat_tear.sub('''static void mod_sysfs_teardown(struct module *mod)
 
 with open('kernel/kernel/module.c', 'w') as f:
     f.write(c)
-print('Patched kernel/module.c: bypassed CRC and neutralized mod_sysfs_setup crash')
+print('Patched kernel/module.c: bypassed CRC/vermagic and neutralized mod_sysfs_setup crash')
+"
+
+# Patch kernel/arch/arm64/lib/strlen.S: add safety guard to __pi_strlen / strlen against NULL or invalid low addresses
+python3 -c "
+with open('kernel/arch/arm64/lib/strlen.S', 'r') as f:
+    s = f.read()
+
+if '.Lsafe_strlen_entry' not in s:
+    s = s.replace('ENTRY(__pi_strlen)', '''ENTRY(__pi_strlen)
+	cmp	x0, #0x1000
+	b.lo	.Lsafe_strlen_entry
+''')
+    s += '''
+.Lsafe_strlen_entry:
+	mov	x0, #0
+	ret
+'''
+    with open('kernel/arch/arm64/lib/strlen.S', 'w') as f:
+        f.write(s)
+    print('Patched kernel/arch/arm64/lib/strlen.S: guarded __pi_strlen against page zero faults')
 "
 
 # Patch drivers/misc/sprdwcn/wcn_bus.c: export missing symbols for sprdwl_ng.ko Wi-Fi

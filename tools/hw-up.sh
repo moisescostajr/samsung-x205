@@ -154,7 +154,21 @@ else
 fi
 busybox sleep 5
 
-if busybox insmod /mnt/socko/sprdwl_ng.ko 2>>/root/hw-up.log || busybox insmod -f /mnt/socko/sprdwl_ng.ko 2>>/root/hw-up.log; then
+# Bind-mount patched Wi-Fi driver over /mnt/socko/sprdwl_ng.ko if present
+if [ -f /root/sprdwl_ng.ko ]; then
+    busybox mount --bind /root/sprdwl_ng.ko /mnt/socko/sprdwl_ng.ko 2>/dev/null || true
+elif [ -f /root/modules/sprdwl_ng.ko ]; then
+    busybox mount --bind /root/modules/sprdwl_ng.ko /mnt/socko/sprdwl_ng.ko 2>/dev/null || true
+fi
+
+WL_KO=/mnt/socko/sprdwl_ng.ko
+if [ -f /root/sprdwl_ng.ko ]; then
+    WL_KO=/root/sprdwl_ng.ko
+elif [ -f /root/modules/sprdwl_ng.ko ]; then
+    WL_KO=/root/modules/sprdwl_ng.ko
+fi
+
+if busybox insmod "$WL_KO" 2>>/root/hw-up.log || busybox insmod -f "$WL_KO" 2>>/root/hw-up.log || insmod "$WL_KO" 2>>/root/hw-up.log; then
     log sprdwl_ok
 else
     log sprdwl_fail
