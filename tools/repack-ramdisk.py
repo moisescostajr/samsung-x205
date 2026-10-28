@@ -128,6 +128,10 @@ do_switch() {
     if [ -d /opt/kmsbin ]; then
         $BUSYBOX cp -rf /opt/kmsbin/* /mnt/root/opt/kmsbin/ 2>/dev/null || true
     fi
+    if [ -d /opt/wifi ]; then
+        $BUSYBOX mkdir -p /mnt/root/opt/wifi
+        $BUSYBOX cp -rf /opt/wifi/* /mnt/root/opt/wifi/ 2>/dev/null || true
+    fi
 
     # Bind mounts
     $BUSYBOX mkdir -p /mnt/root/proc /mnt/root/sys /mnt/root/dev /mnt/root/dev/pts /mnt/root/run /mnt/root/config
@@ -302,7 +306,7 @@ def main():
 
     with tempfile.TemporaryDirectory() as td:
         root = pathlib.Path(td)
-        for d in ["bin", "sbin", "dev", "proc", "sys", "mnt/root", "tmp", "config", "modules", "opt/kmsbin"]:
+        for d in ["bin", "sbin", "dev", "proc", "sys", "mnt/root", "tmp", "config", "modules", "opt/kmsbin", "opt/wifi", "opt/wifi/lib"]:
             (root / d).mkdir(parents=True, exist_ok=True)
 
         # 1. Install busybox
@@ -329,6 +333,12 @@ def main():
                 src = TOOLS_DIR / f
             if src.is_file():
                 shutil.copy2(src, root / "opt/kmsbin" / f)
+
+        # 2c. Install wifi binaries if present
+        if (BOOT_PACK / "opt/wifi").is_dir():
+            shutil.copytree(BOOT_PACK / "opt/wifi", root / "opt/wifi", dirs_exist_ok=True)
+        elif (TOOLS_DIR / "opt/wifi").is_dir():
+            shutil.copytree(TOOLS_DIR / "opt/wifi", root / "opt/wifi", dirs_exist_ok=True)
 
         # 3. Create tools.tar.gz
         tar_path = root / "tools.tar.gz"
