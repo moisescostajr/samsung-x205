@@ -193,6 +193,11 @@ scripts/config --enable CONFIG_DRM_FBDEV_EMULATION
 scripts/config --enable CONFIG_CMDLINE_EXTEND
 scripts/config --set-str CONFIG_CMDLINE "console=tty0 console=ttyGS0,115200 androidboot.wdten=NULL"
 
+# Enable native USB Ethernet networking (CDC-ECM and CDC-NCM) for macOS and Linux host sharing
+scripts/config --enable CONFIG_USB_CONFIGFS_ECM
+scripts/config --enable CONFIG_USB_CONFIGFS_ECM_SUBSET
+scripts/config --enable CONFIG_USB_CONFIGFS_NCM
+
 echo "=== 4. Compiling Kernel Image ==="
 make -j"$(nproc)" ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- KCFLAGS="-Wno-error" Image
 cd ..

@@ -99,15 +99,22 @@ NVITEM=$(part_by_name nvitem)
 PRODNV=$(part_by_name prodnv)
 log "parts socko=$SOCKO super=$SUPER wcn=$WCN gnss=$GNSS l_modem=$L_MODEM l_ldsp=$L_LDSP"
 
-if [ -n "$SUPER" ] && busybox losetup -o 4281335808 /dev/loop0 "$SUPER"; then
-    if busybox mount -t ext4 -o ro /dev/loop0 /mnt/vendor; then
-        busybox mount --bind /mnt/vendor /vendor
-        log vendor_mounted
+if [ -n "$SUPER" ]; then
+    if busybox grep -q 'androidboot.em.model=SM-X205' /proc/cmdline; then
+        VENDOR_OFF=3952082944
     else
-        log vendor_mount_fail
+        VENDOR_OFF=4281335808
     fi
-else
-    log losetup_fail
+    if busybox losetup -o "$VENDOR_OFF" /dev/loop0 "$SUPER" || busybox losetup -o 3952082944 /dev/loop0 "$SUPER" || busybox losetup -o 4281335808 /dev/loop0 "$SUPER"; then
+        if busybox mount -t ext4 -o ro /dev/loop0 /mnt/vendor; then
+            busybox mount --bind /mnt/vendor /vendor
+            log vendor_mounted
+        else
+            log vendor_mount_fail
+        fi
+    else
+        log losetup_fail
+    fi
 fi
 
 if [ -n "$SOCKO" ]; then
@@ -145,14 +152,7 @@ log "wifi_mac=$WIFI_MAC"
 
 echo on > /sys/devices/platform/sprd-marlin3/power/control 2>/dev/null || true
 echo on > /sys/devices/virtual/misc/wcn/power/control 2>/dev/null || true
-
-if [ -e /proc/mdbg/at_cmd ]; then
-    echo startwcn > /proc/mdbg/at_cmd &
-    log startwcn_sent
-else
-    log no_mdbg
-fi
-busybox sleep 5
+busybox sleep 2
 
 # Bind-mount patched Wi-Fi driver over /mnt/socko/sprdwl_ng.ko if present
 if [ -f /root/sprdwl_ng.ko ]; then

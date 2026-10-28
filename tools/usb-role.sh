@@ -63,8 +63,13 @@ bind_gadget() {
     ensure_gadget_dirs
     echo disable > "$HOSTEN" 2>/dev/null || true
     set_mode peripheral || true
+    busybox mkdir -p "$G/functions/ecm.usb0" 2>/dev/null
     busybox mkdir -p "$G/functions/rndis.usb0" 2>/dev/null
-    [ -d "$G/functions/rndis.usb0" ] && busybox ln -sfn "$G/functions/rndis.usb0" "$G/configs/b.1/f2"
+    if [ -d "$G/functions/ecm.usb0" ]; then
+        busybox ln -sfn "$G/functions/ecm.usb0" "$G/configs/b.1/f2"
+    elif [ -d "$G/functions/rndis.usb0" ]; then
+        busybox ln -sfn "$G/functions/rndis.usb0" "$G/configs/b.1/f2"
+    fi
     echo "" > "$G/UDC" 2>/dev/null || true
     busybox sleep 1
     echo "$UDC" > "$G/UDC"
