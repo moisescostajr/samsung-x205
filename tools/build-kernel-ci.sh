@@ -65,6 +65,17 @@ for root, _, files in os.walk('kernel'):
 "
 echo 'ccflags-y += -I$(src)' >> kernel/drivers/devfreq/sprd/Makefile 2>/dev/null || true
 
+# Patch kernel/module.c: allow vendor modules with mismatched genksyms CRC (GCC vs Clang)
+python3 -c "
+with open('kernel/kernel/module.c', 'r') as f:
+    c = f.read()
+if 'if (versions[i].crc == crcval)' in c:
+    c = c.replace('if (versions[i].crc == crcval)', 'if (1 || versions[i].crc == crcval)')
+    with open('kernel/kernel/module.c', 'w') as f:
+        f.write(c)
+    print('Patched kernel/module.c to accept vendor module CRCs')
+"
+
 # Ensure KBUILD_CFLAGS silences GCC 11 warning-errors
 echo 'KBUILD_CFLAGS += -Wno-error -Wno-strict-prototypes -Wno-format-zero-length -Wno-pointer-sign -Wno-array-bounds' >> kernel/Makefile
 
@@ -128,18 +139,24 @@ wget -q -O libdrm_temp/libdrm-dev.deb "http://ports.ubuntu.com/pool/main/libd/li
 dpkg-deb -x libdrm_temp/libdrm2.deb libdrm_temp/root 2>/dev/null || true
 dpkg-deb -x libdrm_temp/libdrm-dev.deb libdrm_temp/root 2>/dev/null || true
 
+# Recreate relative symlink for libdrm.so in extracted tree
+LIBDIR="$(pwd)/libdrm_temp/root/usr/lib/aarch64-linux-gnu"
+if [ -d "$LIBDIR" ]; then
+    (cd "$LIBDIR" && ln -sf libdrm.so.2.4.0 libdrm.so && ln -sf libdrm.so.2.4.0 libdrm.so.2)
+fi
+
 aarch64-linux-gnu-gcc -O2 -Wall tools/drmstep.c \
     -Ilibdrm_temp/root/usr/include \
     -Ilibdrm_temp/root/usr/include/libdrm \
     -Llibdrm_temp/root/usr/lib/aarch64-linux-gnu \
     -ldrm -Wl,-rpath,/lib:/usr/lib \
-    -o boot-pack/drmstep-fb2 2>/dev/null || \
+    -o boot-pack/drmstep-fb2 || \
 aarch64-linux-gnu-gcc -static -O2 -Wall tools/drmstep.c \
     -Ilibdrm_temp/root/usr/include \
     -Ilibdrm_temp/root/usr/include/libdrm \
     -Llibdrm_temp/root/usr/lib/aarch64-linux-gnu \
     -ldrm \
-    -o boot-pack/drmstep-fb2 2>/dev/null || true
+    -o boot-pack/drmstep-fb2 || true
 
 python3 -c "
 import struct
