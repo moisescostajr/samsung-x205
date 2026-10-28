@@ -16,11 +16,8 @@ log() { echo "gta8-gpu [$(busybox cut -d. -f1 /proc/uptime)s]: $*" >> "$LOG"; }
 
 log START
 
-if [ -f /root/gpu-disable ]; then
-    log "GPU explicitly disabled by /root/gpu-disable (using safe pixman software renderer)"
-    log DONE
-    exit 0
-fi
+# Ensure GPU disable flag is purged
+rm -f /root/gpu-disable 2>/dev/null || true
 
 mknod_from_sys() {
     node=$1
@@ -50,10 +47,11 @@ mknod_from_sys /dev/mali0 /sys/class/misc/mali0/dev && log mali0_node \
     || log mali0_node_fail
 
 if ! busybox lsmod | busybox grep -q "^dma_heap_compat "; then
-    if [ -f /opt/kmsbin/dma_heap_compat.ko ]; then
-        insmod /opt/kmsbin/dma_heap_compat.ko >>"$LOG" 2>&1 && log dmaheap_ok \
-            || log dmaheap_fail
-    fi
+    for k in /opt/kmsbin/dma_heap_compat.ko /root/modules/dma_heap_compat.ko /modules/dma_heap_compat.ko; do
+        if [ -f "$k" ]; then
+            insmod "$k" >>"$LOG" 2>&1 && log "dmaheap_ok: $k" && break || log "dmaheap_fail: $k"
+        fi
+    done
 fi
 
 MAJ=$(busybox awk '/dma_heap/{print $1}' /proc/devices | busybox head -1)
