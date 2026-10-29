@@ -283,28 +283,40 @@ aarch64-linux-gnu-gcc -shared -fPIC -nostdlib -O2 \
 
 echo "=== 5b. Compiling drmstep bootsplash ==="
 mkdir -p libdrm_temp boot-pack/opt/kmsbin tools/opt/kmsbin
-wget -q -O libdrm_temp/libdrm2.deb "http://ports.ubuntu.com/pool/main/libd/libdrm/libdrm2_2.4.113-2~ubuntu0.22.04.1_arm64.deb" || true
-wget -q -O libdrm_temp/libdrm-dev.deb "http://ports.ubuntu.com/pool/main/libd/libdrm/libdrm-dev_2.4.113-2~ubuntu0.22.04.1_arm64.deb" || true
+rm -rf libdrm_temp/root libdrm_temp/libdrm2.deb libdrm_temp/libdrm-dev.deb
+DRM_POOL="https://ports.ubuntu.com/pool/main/libd/libdrm"
+DRM_VER="2.4.113-2~ubuntu0.22.04.1"
 
-dpkg-deb -x libdrm_temp/libdrm2.deb libdrm_temp/root 2>/dev/null || true
-dpkg-deb -x libdrm_temp/libdrm-dev.deb libdrm_temp/root 2>/dev/null || true
+drm_fetch() {
+    if curl -fsSL --retry 3 --connect-timeout 20 -o "$2" "$1"; then
+        return 0
+    fi
+    echo "[WARN] download failed: $1" >&2
+    return 1
+}
+
+drm_ok=1
+drm_fetch "$DRM_POOL/libdrm2_${DRM_VER}_arm64.deb" libdrm_temp/libdrm2.deb || drm_ok=0
+drm_fetch "$DRM_POOL/libdrm-dev_${DRM_VER}_arm64.deb" libdrm_temp/libdrm-dev.deb || drm_ok=0
+
+if [ "$drm_ok" = 1 ]; then
+    dpkg-deb -x libdrm_temp/libdrm2.deb libdrm_temp/root || drm_ok=0
+    dpkg-deb -x libdrm_temp/libdrm-dev.deb libdrm_temp/root || drm_ok=0
+fi
 
 # Recreate relative symlink for libdrm.so in extracted tree
 LIBDIR="$(pwd)/libdrm_temp/root/usr/lib/aarch64-linux-gnu"
-if [ -d "$LIBDIR" ]; then
+if [ "$drm_ok" = 1 ] && [ -f libdrm_temp/root/usr/include/libdrm/xf86drm.h ] && [ -d "$LIBDIR" ]; then
     (cd "$LIBDIR" && ln -sf libdrm.so.2.4.0 libdrm.so && ln -sf libdrm.so.2.4.0 libdrm.so.2)
+    aarch64-linux-gnu-gcc -O2 -Wall tools/drmstep.c \
+        -Ilibdrm_temp/root/usr/include/libdrm \
+        -Llibdrm_temp/root/usr/lib/aarch64-linux-gnu \
+        -ldrm -Wl,-rpath,/lib:/usr/lib \
+        -o boot-pack/drmstep-fb2 && echo "[OK] built drmstep-fb2" ||
+        echo "[WARN] drmstep-fb2 build failed (splash disabled, boot continues)" >&2
+else
+    echo "[WARN] libdrm aarch64 headers/libs unavailable; skipping drmstep-fb2" >&2
 fi
-
-aarch64-linux-gnu-gcc -O2 -Wall tools/drmstep.c \
-    -Ilibdrm_temp/root/usr/include/libdrm \
-    -Llibdrm_temp/root/usr/lib/aarch64-linux-gnu \
-    -ldrm -Wl,-rpath,/lib:/usr/lib \
-    -o boot-pack/drmstep-fb2 || \
-aarch64-linux-gnu-gcc -static -O2 -Wall tools/drmstep.c \
-    -Ilibdrm_temp/root/usr/include/libdrm \
-    -Llibdrm_temp/root/usr/lib/aarch64-linux-gnu \
-    -ldrm \
-    -o boot-pack/drmstep-fb2 || true
 
 python3 -c "
 import struct
