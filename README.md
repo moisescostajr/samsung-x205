@@ -62,8 +62,9 @@ come from there).
    at boot:
 
    ```sh
+   cp tools/wpa_supplicant.conf /Volumes/GTA8CFG/wpa_supplicant.conf
+   # or start from the example:
    cp tools/gta8boot/wpa_supplicant.conf.example /Volumes/GTA8CFG/wpa_supplicant.conf
-   $EDITOR /Volumes/GTA8CFG/wpa_supplicant.conf
    diskutil eject /dev/diskX
    ```
 
