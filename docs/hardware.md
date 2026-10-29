@@ -5,12 +5,12 @@ Samsung Galaxy Tab A8 Wi-Fi (SM-X200, `gta8wifi`).
 - SoC: Unisoc T618 / UMS512 (`ums512_25c10`), 2× Cortex-A75 + 6× Cortex-A55, 3 GB RAM
 - Display: 1200×1920 HX83102e, Himax touch, `sprd_backlight`
 - Sensors (via the AON CM4 hub, `sprd-sensor`): BMI320 accel/gyro, MMC5603 mag, STK3X1X ALS. Auto-rotate and auto-brightness: `tools/sensors-up.sh` + `tools/gta8-sensors.py`. Do not write `/proc/pmic/stop` — that hard-resets the board.
-- Phosh QS brightness is not real `gsd-power` (that binary needs logind). `tools/gsd-power-stub.py` owns `org.gnome.SettingsDaemon.Power` on the session bus and writes `sprd_backlight`. Volume is Pulse software volume on the `sprd` pipe-sink.
+- Phosh QS brightness and volume use the real GNOME Settings Daemon under systemd/logind. The old `tools/gsd-power-stub.py` remains for the manual BusyBox session only. Volume is Pulse software volume on the `sprd` pipe-sink.
 - GPU: Mali-G52 MP2 (`gondul`, r34p0 kernel module from the vendor `socko` partition)
 - Storage: 32 GB eMMC (`mmcblk0`), non-A/B, dynamic `super`, no `vendor_boot`
 - Partitions used here: boot `p37`, recovery `p38`, dtbo `p39`, socko `p40`, vbmeta `p26`, super `p46`, userdata `p53` (FBE)
-- Persistent GNU/Linux root: microSD `mmcblk1p1` ext4, Debian 12 bookworm arm64
-- USB-C: Unisoc musb dual-role. v57 ramdisk pins it as an ACM/RNDIS gadget; v58 + `tools/usb-role.sh auto` unbind the UDC and set `musb_hostenable` so Type-C CC can pick a gamepad (host) vs a PC (gadget). `usb-role.sh gadget` restores the Mac serial/RNDIS link. Kernel already has `usbhid`/`xpad`/`hid-sony`.
+- Persistent GNU/Linux root: microSD `mmcblk1p1` ext4 `gta8root`, Debian 12 bookworm arm64 + Phosh; `mmcblk1p2` FAT32 `GTA8CFG` for Wi-Fi provisioning
+- USB-C: Unisoc musb dual-role. The systemd image keeps an ACM console + NCM network link via `gta8-bringup.sh` / `tools/usb-role.sh gadget`; `tools/usb-role.sh auto` gives the port back to OTG host mode. Kernel already has `usbhid`/`xpad`/`hid-sony`.
 - Wi-Fi: Unisoc WCN CP2 + `sprdwl_ng.ko` + vendor INI from `socko`
 - Audio: VBC + four Awinic AW882XX smart amps
 - Stock Android: One UI on Android 14, kernel 4.14.199, clang 11
@@ -18,11 +18,16 @@ Samsung Galaxy Tab A8 Wi-Fi (SM-X200, `gta8wifi`).
 
 ## Kernel gaps on stock 4.14
 
-Present: overlay, ext4, f2fs, loop, device-mapper, binder, USB ACM + RNDIS.
+Present: overlay, ext4, f2fs, loop, device-mapper, binder, USB ACM + NCM/ECM/RNDIS.
 
-Missing on stock, added in the custom kernel used here: `CONFIG_PID_NS` (needed for `switch_root` + Debian as PID 1). Still missing on that tree unless noted in the packer: `USER_NS`, `IPC_NS`, `DEVTMPFS`.
+Added in the custom kernel used here: `CONFIG_PID_NS`, `CONFIG_USER_NS`,
+`CONFIG_IPC_NS`, `CONFIG_DEVTMPFS`, `CONFIG_SYSVIPC`, FAT/VFAT, cgroup
+controllers, seccomp, and the systemd/udev option set in
+`tools/build-kernel-ci.sh`. The initramfs also works without `DEVTMPFS`.
 
-v57 adds real DRM PRIME export on the SPRD display driver and `CONFIG_VT`. v58 keeps that kernel and only changes debian-init USB policy.
+v57 adds real DRM PRIME export, `CONFIG_VT`, the DPU plane-update fix, and the
+Himax post-probe reset guard. v58 keeps that kernel and only changes the
+userspace USB policy.
 
 ## Do not
 

@@ -17,8 +17,17 @@ setup_android() {
     busybox mknod /dev/loop1 b 7 1 2>/dev/null || true
     if ! busybox grep -q " /mnt/system " /proc/mounts; then
         busybox mkdir -p /mnt/system
+        # X200/X205 put Super at different GPT indexes; resolve by name.
+        super=""
+        for u in /sys/block/mmcblk0/mmcblk0p*/uevent; do
+            if busybox grep -q 'PARTNAME=super' "$u" 2>/dev/null; then
+                super=/dev/$(busybox basename "$(busybox dirname "$u")")
+                break
+            fi
+        done
+        [ -n "$super" ] || return 1
         busybox losetup -d /dev/loop1 2>/dev/null || true
-        busybox losetup -o 1048576 /dev/loop1 /dev/mmcblk0p46
+        busybox losetup -o 1048576 /dev/loop1 "$super"
         busybox mount -t ext4 -o ro /dev/loop1 /mnt/system || return 1
     fi
     if ! busybox grep -q " /system " /proc/mounts; then
@@ -40,9 +49,9 @@ setup_android() {
     ln -sf /dev/mmcblk0p20 /root/not_findpm_sys
     ln -sf /dev/mmcblk0p20 /not_findpm_sys
     chmod 666 /proc/pmic/* /dev/mmcblk0p20 /dev/pmic /dev/trusty-ipc-dev0 /dev/sctl_pm 2>/dev/null || true
-    src=/root/propstub.c
-    [ -f "$src" ] || src=/tmp/propstub.c
-    [ -f /tmp/propstub.so ] || gcc -shared -fPIC -nostdlib -O2 -o /tmp/propstub.so "$src"
+    # Precompiled in CI; the image does not need a compiler.
+    [ -f /tmp/propstub.so ] || \
+        busybox cp -f /opt/kmsbin/propstub.so /tmp/propstub.so 2>/dev/null || true
 }
 
 setup_sensorhub_fs() {
@@ -60,16 +69,9 @@ extract_opcodes() {
     if [ -f /mnt/vendor/sensorhub/shub_fw_accelerometer_bmi320 ]; then
         return 0
     fi
-    cat > /tmp/extract.c << 'EOF'
-void _Z23SensorHubOpcodeExtratorv(void);
-__attribute__((constructor)) void go(void)
-{
-	_Z23SensorHubOpcodeExtratorv();
-}
-EOF
-    gcc -shared -fPIC -nostdlib -O2 -o /tmp/extract.so /tmp/extract.c
+    [ -f /opt/kmsbin/extract.so ] || { log no_extract_so; return 1; }
     LD_LIBRARY_PATH=/vendor/lib64:/system/lib64 \
-        LD_PRELOAD=/tmp/propstub.so:/vendor/lib64/libsensorsdrvcfg.so:/tmp/extract.so \
+        LD_PRELOAD=/tmp/propstub.so:/vendor/lib64/libsensorsdrvcfg.so:/opt/kmsbin/extract.so \
         ANDROID_ROOT=/system /system/bin/true || true
     cp -a /mnt/vendor/sensorhub/. "$SHUB_STORE/" 2>/dev/null || true
 }

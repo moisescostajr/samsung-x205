@@ -96,13 +96,21 @@ if [ -d /system/bin/bootstrap ]; then
 fi
 
 # 5. Build/ensure propstub.so (wifionly=0 for SM-X205)
-PROP_SRC=""
-for p in /root/propstub.c /tmp/propstub.c /opt/kmsbin/propstub.c /tools/propstub.c; do
-    [ -f "$p" ] && PROP_SRC="$p" && break
+# Prefer the copy built by CI; the Debian image has no compiler.
+for p in /tmp/propstub.so /opt/kmsbin/propstub.so; do
+    [ -f "$p" ] && break
 done
-
-if [ -n "$PROP_SRC" ]; then
-    gcc -shared -fPIC -nostdlib -O2 -o /tmp/propstub.so "$PROP_SRC" 2>/dev/null && log "compiled propstub.so from $PROP_SRC"
+if [ ! -f /tmp/propstub.so ] && [ -f /opt/kmsbin/propstub.so ]; then
+    cp -f /opt/kmsbin/propstub.so /tmp/propstub.so 2>/dev/null || true
+fi
+if [ ! -f /tmp/propstub.so ]; then
+    PROP_SRC=""
+    for p in /root/propstub.c /tmp/propstub.c /opt/kmsbin/propstub.c /tools/propstub.c; do
+        [ -f "$p" ] && PROP_SRC="$p" && break
+    done
+    if [ -n "$PROP_SRC" ] && command -v gcc >/dev/null 2>&1; then
+        gcc -shared -fPIC -nostdlib -O2 -o /tmp/propstub.so "$PROP_SRC" 2>/dev/null && log "compiled propstub.so from $PROP_SRC"
+    fi
 fi
 
 if [ ! -f /tmp/propstub.so ]; then

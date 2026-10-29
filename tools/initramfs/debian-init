@@ -1,0 +1,108 @@
+#!/bin/busybox sh
+export PATH=/sbin:/bin:/usr/sbin:/usr/bin:/opt/kmsbin
+export HOME=/root
+trap '' HUP INT QUIT TSTP TTIN TTOU
+
+busybox mount -o remount,rw / 2>/dev/null || true
+busybox mkdir -p /dev/pts /dev/shm /run /tmp /dev/dri /config /root/modules /run/systemd/resolve
+busybox mount -t tmpfs -o mode=755,nosuid,nodev tmpfs /run 2>/dev/null || true
+busybox mount -t tmpfs tmpfs /tmp 2>/dev/null || true
+busybox mount -t devpts devpts /dev/pts 2>/dev/null || true
+
+# Neutralize hardware watchdog
+echo "watchdog rstoff" > /proc/mdbg/at_cmd 2>/dev/null || true
+for ko in /root/modules/pmicwdt_off.ko /modules/pmicwdt_off.ko /pmicwdt_off.ko; do
+    if [ -f "$ko" ]; then
+        busybox insmod "$ko" 2>/dev/null && break
+    fi
+done
+
+# Keep watchdog timer fed in background
+for w in /sys/class/watchdog/watchdog*; do
+    [ -e "$w/dev" ] || continue
+    wdev=$(busybox cat "$w/dev")
+    wname=${w##*/}
+    busybox mknod -m 600 "/dev/$wname" c "${wdev%:*}" "${wdev#*:}" 2>/dev/null || true
+done
+busybox mknod -m 666 /dev/watchdog c 10 130 2>/dev/null || true
+busybox sh -c 'trap "" HUP INT QUIT; while true; do
+    for n in /dev/watchdog /dev/watchdog0 /dev/watchdog1; do
+        [ -c "$n" ] && echo 1 > "$n" 2>/dev/null || true
+        [ -c "$n" ] && echo V > "$n" 2>/dev/null || true
+    done
+    echo "watchdog rstoff" > /proc/mdbg/at_cmd 2>/dev/null || true
+    busybox sleep 4
+done' </dev/null >/dev/null 2>&1 &
+
+busybox mknod -m 600 /dev/console c 5 1 2>/dev/null || true
+busybox mknod -m 666 /dev/tty0 c 4 0 2>/dev/null || true
+busybox mknod -m 666 /dev/tty1 c 4 1 2>/dev/null || true
+busybox mknod -m 666 /dev/null c 1 3 2>/dev/null || true
+busybox mknod -m 666 /dev/zero c 1 5 2>/dev/null || true
+busybox mknod -m 600 /dev/ttyGS0 c 509 0 2>/dev/null || true
+busybox mount -t proc proc /proc 2>/dev/null || true
+busybox mount -t sysfs sysfs /sys 2>/dev/null || true
+busybox mdev -s 2>/dev/null || true
+
+# Ensure DRM graphics node exists
+if [ -e /sys/class/drm/card0/dev ]; then
+    d=$(busybox cat /sys/class/drm/card0/dev)
+    busybox rm -f /dev/dri/card0
+    busybox mknod -m 666 /dev/dri/card0 c "${d%:*}" "${d#*:}" 2>/dev/null || true
+fi
+
+# Start drmstep bootsplash on screen (replaces frozen Samsung logo)
+if ! busybox pidof drmstep-fb2 >/dev/null 2>&1; then
+    for d in /opt/kmsbin/drmstep-fb2 /root/drmstep-fb2 /tmp/drmstep-fb2; do
+        if [ -x "$d" ]; then
+            busybox setsid "$d" >> /root/drmstep.log 2>&1 &
+            break
+        fi
+    done
+fi
+
+# Save boot diagnostics
+busybox dmesg > /root/dmesg.txt 2>/dev/null || true
+
+# Deploy custom Wi-Fi config if present
+if [ -f /root/wpa_supplicant.conf ]; then
+    busybox cp -f /root/wpa_supplicant.conf /etc/wpa_supplicant.conf 2>/dev/null || true
+fi
+
+# Ensure patched Wi-Fi driver is bind-mounted over stock vendor module
+if [ -f /root/sprdwl_ng.ko ]; then
+    busybox mount --bind /root/sprdwl_ng.ko /mnt/socko/sprdwl_ng.ko 2>/dev/null || true
+elif [ -f /root/modules/sprdwl_ng.ko ]; then
+    busybox mount --bind /root/modules/sprdwl_ng.ko /mnt/socko/sprdwl_ng.ko 2>/dev/null || true
+fi
+
+# Run hardware bringup in background
+if [ -x /root/hw-up.sh ]; then
+    busybox sh /root/hw-up.sh </dev/null >> /root/hw-up.log 2>&1 &
+fi
+
+# Shell on tablet screen console
+busybox setsid sh -c 'trap "" HUP INT QUIT TSTP TTIN TTOU
+while true; do
+    echo "" > /dev/tty1 2>/dev/null
+    echo "==========================================================" > /dev/tty1 2>/dev/null
+    echo "  Debian 12 (bookworm) - Samsung Galaxy Tab A8 LTE (X205)  " > /dev/tty1 2>/dev/null
+    echo "==========================================================" > /dev/tty1 2>/dev/null
+    echo "Type commands here or connect via USB serial (ttyGS0)." > /dev/tty1 2>/dev/null
+    busybox sh <>/dev/tty1 >&0 2>&0
+    busybox sleep 1
+done' </dev/null >/dev/null 2>&1 &
+
+# Serial shell on USB ACM
+busybox setsid sh -c 'trap "" HUP INT QUIT TSTP TTIN TTOU
+while true; do
+    echo "gta8lte debian prompt" > /dev/ttyGS0 2>/dev/null
+    busybox sh <>/dev/ttyGS0 >&0 2>&0
+    busybox sleep 1
+done' </dev/null >/dev/null 2>&1 &
+
+# Keep PID 1 running FOREVER
+while true; do
+    echo V > /dev/watchdog 2>/dev/null || true
+    busybox sleep 5
+done

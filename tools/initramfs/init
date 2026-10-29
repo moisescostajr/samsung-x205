@@ -1,0 +1,209 @@
+#!/bin/busybox sh
+# GTA8 LTE initramfs PID 1.
+#
+# Jobs here are deliberately small:
+#   * mount /proc, /sys and a usable /dev (the vendor 4.14 kernel may not have
+#     devtmpfs; udev in the real rootfs needs working device nodes),
+#   * silence the SC2730 watchdog before anything can trip it,
+#   * expose a USB ACM console so the tablet is reachable while booting,
+#   * find the Debian rootfs on the microSD and hand over to systemd.
+#
+# No splash process may survive switch_root: it would keep DRM master and
+# stop phoc from taking over the display.
+export PATH=/bin:/sbin:/usr/bin:/usr/sbin
+BUSYBOX=/bin/busybox
+trap '' HUP INT QUIT TSTP TTIN TTOU
+
+log() {
+    echo "gta8-init: $*" > /dev/kmsg 2>/dev/null || true
+    echo "gta8-init: $*" > /dev/tty0 2>/dev/null || true
+}
+
+$BUSYBOX mkdir -p /proc /sys /dev /tmp /run /mnt/root /config /modules
+
+# proc/sys first, then a /dev that works with or without devtmpfs.
+$BUSYBOX mount -t proc proc /proc 2>/dev/null || true
+$BUSYBOX mount -t sysfs sysfs /sys 2>/dev/null || true
+if ! $BUSYBOX grep -q '^devtmpfs /dev ' /proc/mounts; then
+    $BUSYBOX mount -t devtmpfs devtmpfs /dev 2>/dev/null || {
+        $BUSYBOX mount -t tmpfs tmpfs /dev 2>/dev/null || true
+        for n in "console c 5 1" "tty c 5 0" "tty0 c 4 0" "tty1 c 4 1" \
+                 "null c 1 3" "zero c 1 5" "kmsg c 1 11"; do
+            set -- $n
+            $BUSYBOX mknod -m 666 "/dev/$1" "$2" "$3" "$4" 2>/dev/null || true
+        done
+        $BUSYBOX mdev -s 2>/dev/null || true
+    }
+fi
+$BUSYBOX mknod -m 600 /dev/console c 5 1 2>/dev/null || true
+$BUSYBOX mknod -m 666 /dev/null c 1 3 2>/dev/null || true
+$BUSYBOX mknod -m 666 /dev/zero c 1 5 2>/dev/null || true
+$BUSYBOX mknod -m 600 /dev/kmsg c 1 11 2>/dev/null || true
+$BUSYBOX mknod -m 600 /dev/ttyGS0 c 509 0 2>/dev/null || true
+
+log "kernel booted, starting initramfs"
+
+# 1. SC2730 watchdog: disable it and keep the timer fed until systemd is up.
+echo "watchdog rstoff" > /proc/mdbg/at_cmd 2>/dev/null || true
+for ko in /pmicwdt_off.ko /modules/pmicwdt_off.ko; do
+    if [ -f "$ko" ]; then
+        $BUSYBOX insmod "$ko" 2>/dev/null && log "watchdog module: $ko" && break
+    fi
+done
+for w in /sys/class/watchdog/watchdog*; do
+    [ -e "$w/dev" ] || continue
+    wdev=$($BUSYBOX cat "$w/dev")
+    wname=${w##*/}
+    $BUSYBOX mknod -m 600 "/dev/$wname" c "${wdev%:*}" "${wdev#*:}" 2>/dev/null || true
+done
+$BUSYBOX mknod -m 666 /dev/watchdog c 10 130 2>/dev/null || true
+$BUSYBOX sh -c 'trap "" HUP INT QUIT
+while true; do
+    for n in /dev/watchdog /dev/watchdog0 /dev/watchdog1; do
+        [ -c "$n" ] && echo 1 > "$n" 2>/dev/null || true
+        [ -c "$n" ] && echo V > "$n" 2>/dev/null || true
+    done
+    echo "watchdog rstoff" > /proc/mdbg/at_cmd 2>/dev/null || true
+    /bin/busybox sleep 4
+done' </dev/null >/dev/null 2>&1 &
+
+# 2. USB-C ACM + NCM gadget: a serial console and a network link even when
+#    the rootfs never comes up. The rootfs can re-bind the UDC later.
+$BUSYBOX mount -t configfs none /config 2>/dev/null || true
+G=/config/usb_gadget/g1
+if [ -d /config/usb_gadget ]; then
+    $BUSYBOX mkdir -p "$G/strings/0x409" "$G/functions/acm.gs0" \
+        "$G/functions/ncm.usb0" "$G/configs/b.1/strings/0x409" 2>/dev/null || true
+    echo 0x1d6b > "$G/idVendor" 2>/dev/null || true
+    echo 0x0104 > "$G/idProduct" 2>/dev/null || true
+    echo 0xef > "$G/bDeviceClass" 2>/dev/null || true
+    echo 0x02 > "$G/bDeviceSubClass" 2>/dev/null || true
+    echo 0x01 > "$G/bDeviceProtocol" 2>/dev/null || true
+    echo "Galaxy Tab A8 LTE" > "$G/strings/0x409/product" 2>/dev/null || true
+    $BUSYBOX ln -sfn "$G/functions/acm.gs0" "$G/configs/b.1/f1" 2>/dev/null || true
+    $BUSYBOX ln -sfn "$G/functions/ncm.usb0" "$G/configs/b.1/f2" 2>/dev/null || true
+    echo musb-hdrc.0.auto > "$G/UDC" 2>/dev/null || true
+fi
+
+# 3. DRM node for the splash / early compositor.
+if [ -e /sys/class/drm/card0/dev ]; then
+    d=$($BUSYBOX cat /sys/class/drm/card0/dev)
+    $BUSYBOX mkdir -p /dev/dri
+    $BUSYBOX rm -f /dev/dri/card0
+    $BUSYBOX mknod -m 666 /dev/dri/card0 c "${d%:*}" "${d#*:}" 2>/dev/null || true
+fi
+SPLASH_PID=""
+if [ -x /opt/kmsbin/drmstep-fb2 ]; then
+    /opt/kmsbin/drmstep-fb2 </dev/null >/dev/null 2>&1 &
+    SPLASH_PID=$!
+fi
+
+# 4. Prepare the target root and hand over.
+do_switch() {
+    log "preparing Debian rootfs on $1"
+    $BUSYBOX mkdir -p /mnt/root/bin /mnt/root/sbin /mnt/root/usr/bin \
+        /mnt/root/usr/sbin /mnt/root/root /mnt/root/root/modules \
+        /mnt/root/etc/udev/rules.d /mnt/root/opt/kmsbin /mnt/root/opt/wifi \
+        /mnt/root/var/log
+
+    # Busybox is the emergency shell if systemd or the image is broken.
+    $BUSYBOX cp -f /bin/busybox /mnt/root/bin/busybox 2>/dev/null || true
+    $BUSYBOX chmod 755 /mnt/root/bin/busybox 2>/dev/null || true
+    [ -e /mnt/root/bin/sh ] || $BUSYBOX ln -sf /bin/busybox /mnt/root/bin/sh 2>/dev/null || true
+
+    # Tools, modules and optional vendor bits from this ramdisk.
+    if [ -f /tools.tar.gz ]; then
+        $BUSYBOX tar -xzf /tools.tar.gz -C /mnt/root/root/ 2>/dev/null || true
+        $BUSYBOX cp -f /mnt/root/root/udev/*.rules /mnt/root/etc/udev/rules.d/ 2>/dev/null || true
+        $BUSYBOX chmod +x /mnt/root/root/*.sh /mnt/root/root/*.py 2>/dev/null || true
+        $BUSYBOX mkdir -p /mnt/root/usr/share/udhcpc
+        if [ -f /mnt/root/root/default.script ]; then
+            $BUSYBOX cp -f /mnt/root/root/default.script \
+                /mnt/root/usr/share/udhcpc/default.script 2>/dev/null || true
+            $BUSYBOX chmod +x /mnt/root/usr/share/udhcpc/default.script 2>/dev/null || true
+        fi
+    fi
+    if [ -d /modules ]; then
+        $BUSYBOX cp -rf /modules/* /mnt/root/root/modules/ 2>/dev/null || true
+        [ -f /modules/sprdwl_ng.ko ] && \
+            $BUSYBOX cp -f /modules/sprdwl_ng.ko /mnt/root/root/sprdwl_ng.ko 2>/dev/null || true
+    fi
+    if [ -d /opt/kmsbin ]; then
+        $BUSYBOX cp -rf /opt/kmsbin/* /mnt/root/opt/kmsbin/ 2>/dev/null || true
+    fi
+    if [ -d /opt/wifi ]; then
+        $BUSYBOX cp -rf /opt/wifi/* /mnt/root/opt/wifi/ 2>/dev/null || true
+    fi
+    if [ -f /propstub.so ]; then
+        $BUSYBOX cp -f /propstub.so /mnt/root/opt/kmsbin/propstub.so 2>/dev/null || true
+    fi
+
+    # The splash must not survive into the real root: it holds DRM master.
+    if [ -n "$SPLASH_PID" ]; then
+        kill "$SPLASH_PID" 2>/dev/null
+        sleep 1
+        kill -9 "$SPLASH_PID" 2>/dev/null
+    fi
+
+    $BUSYBOX mkdir -p /mnt/root/proc /mnt/root/sys /mnt/root/dev \
+        /mnt/root/dev/pts /mnt/root/run /mnt/root/config
+    $BUSYBOX mount -o bind /proc /mnt/root/proc 2>/dev/null || true
+    $BUSYBOX mount -o bind /sys /mnt/root/sys 2>/dev/null || true
+    $BUSYBOX mount -o bind /dev /mnt/root/dev 2>/dev/null || true
+
+    if [ -x /mnt/root/usr/lib/systemd/systemd ] || \
+       [ -e /mnt/root/sbin/init ] || [ -L /mnt/root/sbin/init ]; then
+        log "handing over to init on $1"
+        exec $BUSYBOX switch_root /mnt/root /sbin/init
+    fi
+
+    # Minimal fallback for a rootfs that has no init at all.
+    if [ -f /debian-init ]; then
+        $BUSYBOX cp -f /debian-init /mnt/root/sbin/init 2>/dev/null || true
+        $BUSYBOX chmod 755 /mnt/root/sbin/init 2>/dev/null || true
+        log "no systemd; using bundled debian-init"
+        exec $BUSYBOX switch_root /mnt/root /sbin/init
+    fi
+    log "rootfs on $1 has no usable init"
+    $BUSYBOX umount /mnt/root/proc /mnt/root/sys /mnt/root/dev 2>/dev/null || true
+    $BUSYBOX umount /mnt/root 2>/dev/null || true
+    return 1
+}
+
+log "scanning for the microSD rootfs"
+for i in $($BUSYBOX seq 1 30); do
+    $BUSYBOX mdev -s 2>/dev/null || true
+    for p in /sys/class/block/mmcblk1p* /sys/class/block/mmcblk0p*; do
+        [ -e "$p/dev" ] || continue
+        pdev=$($BUSYBOX cat "$p/dev")
+        pname=${p##*/}
+        $BUSYBOX mknod -m 660 "/dev/$pname" b "${pdev%:*}" "${pdev#*:}" 2>/dev/null || true
+    done
+    for p in /dev/mmcblk1p1 /dev/mmcblk1p2 /dev/mmcblk1p*; do
+        [ -b "$p" ] || continue
+        if $BUSYBOX mount -t ext4 "$p" /mnt/root 2>/dev/null || \
+           $BUSYBOX mount "$p" /mnt/root 2>/dev/null; then
+            if [ -d /mnt/root/etc ] && [ -d /mnt/root/usr ]; then
+                do_switch "$p"
+            fi
+            $BUSYBOX umount /mnt/root 2>/dev/null || true
+        fi
+    done
+    $BUSYBOX sleep 1
+done
+
+log "FAIL: no Debian rootfs on microSD; entering rescue mode"
+$BUSYBOX setsid sh -c 'while true; do
+    echo "gta8 rescue shell (no rootfs)" > /dev/ttyGS0 2>/dev/null
+    /bin/busybox sh <>/dev/ttyGS0 >&0 2>&0
+    /bin/busybox sleep 1
+done' </dev/null >/dev/null 2>&1 &
+
+while true; do
+    for n in /dev/watchdog /dev/watchdog0 /dev/watchdog1; do
+        [ -c "$n" ] && echo 1 > "$n" 2>/dev/null || true
+        [ -c "$n" ] && echo V > "$n" 2>/dev/null || true
+    done
+    echo "watchdog rstoff" > /proc/mdbg/at_cmd 2>/dev/null || true
+    $BUSYBOX sleep 5
+done

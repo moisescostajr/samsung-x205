@@ -13,6 +13,9 @@ echo "=== 2. Applying Patches ==="
 # Patch 2: Wire real DRM PRIME export for wlroots/compositor
 (cd kernel && python3 ../tools/patch-prime-vt.py)
 
+# Patch 3: keep the panel alive once a compositor takes over
+(cd kernel && python3 ../tools/patch-display.py)
+
 # Force NO_YAML in dtc to avoid host libyaml mismatch
 sed -i 's/HOST_EXTRACFLAGS := -I\$(src)\/libfdt/HOST_EXTRACFLAGS := -I\$(src)\/libfdt -DNO_YAML/' kernel/scripts/dtc/Makefile
 sed -i 's/dtc-objs.*+=.*yamltree.o/# disabled yaml/' kernel/scripts/dtc/Makefile 2>/dev/null || true
@@ -175,6 +178,47 @@ scripts/config --enable CONFIG_PID_NS
 scripts/config --enable CONFIG_IKCONFIG
 scripts/config --enable CONFIG_IKCONFIG_PROC
 
+# systemd / udev / Phosh need a real /dev and a few namespace options that the
+# Android defconfig leaves out. DEVTMPFS is what lets udev populate /dev.
+scripts/config --enable CONFIG_DEVTMPFS
+scripts/config --enable CONFIG_DEVTMPFS_MOUNT
+scripts/config --enable CONFIG_FHANDLE
+scripts/config --enable CONFIG_SYSVIPC
+scripts/config --enable CONFIG_IPC_NS
+scripts/config --enable CONFIG_USER_NS
+scripts/config --enable CONFIG_AUTOFS4_FS
+scripts/config --enable CONFIG_KCMP
+scripts/config --enable CONFIG_NAMESPACES
+scripts/config --enable CONFIG_UTS_NS
+scripts/config --enable CONFIG_NET_NS
+scripts/config --enable CONFIG_CGROUPS
+scripts/config --enable CONFIG_CGROUP_DEVICE
+scripts/config --enable CONFIG_CGROUP_PIDS
+scripts/config --enable CONFIG_CGROUP_NET_PRIO
+scripts/config --enable CONFIG_CGROUP_NET_CLASSID
+scripts/config --enable CONFIG_TMPFS
+scripts/config --enable CONFIG_EXT4_FS
+scripts/config --enable CONFIG_INOTIFY_USER
+scripts/config --enable CONFIG_SIGNALFD
+scripts/config --enable CONFIG_TIMERFD
+scripts/config --enable CONFIG_EPOLL
+scripts/config --enable CONFIG_EVENTFD
+scripts/config --enable CONFIG_SECCOMP
+scripts/config --enable CONFIG_SECCOMP_FILTER
+
+# The microSD provisioning partition is FAT32. The vendor defconfig does not
+# always include FAT/VFAT, and without it /mnt/gta8boot silently fails.
+scripts/config --enable CONFIG_FAT_FS
+scripts/config --enable CONFIG_VFAT_FS
+scripts/config --enable CONFIG_MSDOS_FS
+scripts/config --enable CONFIG_NLS
+scripts/config --enable CONFIG_NLS_CODEPAGE_437
+scripts/config --enable CONFIG_NLS_ISO8859_1
+scripts/config --enable CONFIG_NLS_UTF8
+
+# losetup is used to mount the vendor super/socko images at boot.
+scripts/config --enable CONFIG_BLK_DEV_LOOP
+
 # Enable Virtual Terminal & Framebuffer Console on tablet display (fbcon)
 scripts/config --enable CONFIG_FB
 scripts/config --enable CONFIG_VT
@@ -190,8 +234,10 @@ scripts/config --enable CONFIG_LOGO
 scripts/config --enable CONFIG_DRM_FBDEV_EMULATION
 
 # Default console command line
+scripts/config --disable CONFIG_CMDLINE_FORCE
+scripts/config --disable CONFIG_CMDLINE_FROM_BOOTLOADER
 scripts/config --enable CONFIG_CMDLINE_EXTEND
-scripts/config --set-str CONFIG_CMDLINE "console=tty0 console=ttyGS0,115200 androidboot.wdten=NULL"
+scripts/config --set-str CONFIG_CMDLINE "console=tty0 console=ttyGS0,115200 androidboot.wdten=NULL systemd.unified_cgroup_hierarchy=0"
 
 # Enable native USB Ethernet networking (CDC-ECM and CDC-NCM) for macOS and Linux host sharing
 scripts/config --enable CONFIG_USB_CONFIGFS_ECM
@@ -217,6 +263,23 @@ cp -f tools/agdspup/*.ko tools/modules/ 2>/dev/null || true
 make -C "$KDIR" M="$(pwd)/tools/dmaheap" ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- KCFLAGS="-Wno-error" modules 2>/dev/null || true
 cp -f tools/dmaheap/*.ko boot-pack/modules/ 2>/dev/null || true
 cp -f tools/dmaheap/*.ko tools/modules/ 2>/dev/null || true
+
+# Precompiled property stub for the vendor modem daemon. Doing it here keeps a
+# cross compiler out of the Debian image.
+echo "=== 5a. Compiling propstub ==="
+aarch64-linux-gnu-gcc -shared -fPIC -nostdlib -O2 \
+    -o boot-pack/propstub.so tools/propstub.c
+
+# Sensor-hub opcode extractor: same idea, precompiled so the image needs no gcc.
+cat > /tmp/gta8-extract.c <<'EOF'
+void _Z23SensorHubOpcodeExtratorv(void);
+__attribute__((constructor)) void go(void)
+{
+	_Z23SensorHubOpcodeExtratorv();
+}
+EOF
+aarch64-linux-gnu-gcc -shared -fPIC -nostdlib -O2 \
+    -o boot-pack/extract.so /tmp/gta8-extract.c
 
 echo "=== 5b. Compiling drmstep bootsplash ==="
 mkdir -p libdrm_temp boot-pack/opt/kmsbin tools/opt/kmsbin
@@ -263,304 +326,16 @@ cp -f boot-pack/drmstep-fb2 tools/drmstep-fb2 2>/dev/null || true
 cp -f boot-pack/splash.bgra tools/splash.bgra 2>/dev/null || true
 
 echo "=== 6. Building Ramdisk ==="
-mkdir -p ramdisk_root/bin ramdisk_root/sbin ramdisk_root/dev ramdisk_root/proc ramdisk_root/sys ramdisk_root/mnt/root ramdisk_root/tmp ramdisk_root/config ramdisk_root/modules ramdisk_root/lib ramdisk_root/usr/lib
-
-if [ -d libdrm_temp/root/usr/lib/aarch64-linux-gnu ]; then
-    cp -P libdrm_temp/root/usr/lib/aarch64-linux-gnu/libdrm.so* ramdisk_root/lib/ 2>/dev/null || true
-    cp -P libdrm_temp/root/usr/lib/aarch64-linux-gnu/libdrm.so* ramdisk_root/usr/lib/ 2>/dev/null || true
+# The initramfs sources live in tools/initramfs and are shared with the local
+# repack path. Download a static aarch64 busybox if the tree does not have one.
+if [ ! -f tools/busybox-arm64 ]; then
+    wget -q -O busybox.deb http://ports.ubuntu.com/pool/main/b/busybox/busybox-static_1.30.1-7ubuntu3_arm64.deb
+    dpkg-deb -x busybox.deb bb_temp
+    cp -f bb_temp/bin/busybox tools/busybox-arm64
+    rm -rf bb_temp busybox.deb
 fi
-rm -rf libdrm_temp
-
-wget -q -O busybox.deb http://ports.ubuntu.com/pool/main/b/busybox/busybox-static_1.30.1-7ubuntu3_arm64.deb
-dpkg-deb -x busybox.deb bb_temp
-cp -f bb_temp/bin/busybox ramdisk_root/bin/busybox
-rm -rf bb_temp busybox.deb
-chmod 755 ramdisk_root/bin/busybox
-
-# Install modules into ramdisk
-cp -f boot-pack/modules/pmicwdt_off.ko ramdisk_root/pmicwdt_off.ko 2>/dev/null || true
-cp -f boot-pack/modules/*.ko ramdisk_root/modules/ 2>/dev/null || true
-
-# Install bootsplash into ramdisk
-mkdir -p ramdisk_root/opt/kmsbin
-cp -f boot-pack/drmstep-fb2 ramdisk_root/opt/kmsbin/ 2>/dev/null || true
-cp -f boot-pack/splash.bgra ramdisk_root/opt/kmsbin/ 2>/dev/null || true
-
-# Bundle tools inside ramdisk for automatic initial setup
-tar -czf ramdisk_root/tools.tar.gz -C tools .
-
-cat > ramdisk_root/debian-init << 'DEBEOF'
-#!/bin/busybox sh
-export PATH=/sbin:/bin:/usr/sbin:/usr/bin:/opt/kmsbin
-export HOME=/root
-trap '' HUP INT QUIT TSTP TTIN TTOU
-
-busybox mount -o remount,rw /
-busybox mkdir -p /dev/pts /dev/shm /run /tmp /dev/dri /config /root/modules
-busybox mount -t tmpfs -o mode=755,nosuid,nodev tmpfs /run 2>/dev/null || true
-busybox mount -t tmpfs tmpfs /tmp 2>/dev/null || true
-busybox mount -t devpts devpts /dev/pts 2>/dev/null || true
-
-# Neutralize hardware watchdog
-echo "watchdog rstoff" > /proc/mdbg/at_cmd 2>/dev/null || true
-for ko in /root/modules/pmicwdt_off.ko /modules/pmicwdt_off.ko /pmicwdt_off.ko; do
-    if [ -f "$ko" ]; then
-        busybox insmod "$ko" 2>/dev/null && break
-    fi
-done
-
-# Keep watchdog timer fed
-for w in /sys/class/watchdog/watchdog*; do
-    [ -e "$w/dev" ] || continue
-    wdev=$(busybox cat "$w/dev")
-    wname=${w##*/}
-    busybox mknod -m 600 "/dev/$wname" c "${wdev%:*}" "${wdev#*:}" 2>/dev/null || true
-done
-busybox mknod -m 666 /dev/watchdog c 10 130 2>/dev/null || true
-busybox sh -c 'trap "" HUP INT QUIT; while true; do
-    for n in /dev/watchdog /dev/watchdog0 /dev/watchdog1; do
-        [ -c "$n" ] && echo 1 > "$n" 2>/dev/null || true
-        [ -c "$n" ] && echo V > "$n" 2>/dev/null || true
-    done
-    echo "watchdog rstoff" > /proc/mdbg/at_cmd 2>/dev/null || true
-    busybox sleep 4
-done' </dev/null >/dev/null 2>&1 &
-
-busybox mknod -m 600 /dev/console c 5 1 2>/dev/null || true
-busybox mknod -m 666 /dev/tty0 c 4 0 2>/dev/null || true
-busybox mknod -m 666 /dev/tty1 c 4 1 2>/dev/null || true
-busybox mknod -m 666 /dev/null c 1 3 2>/dev/null || true
-busybox mknod -m 666 /dev/zero c 1 5 2>/dev/null || true
-busybox mknod -m 600 /dev/ttyGS0 c 509 0 2>/dev/null || true
-busybox mount -t proc proc /proc 2>/dev/null || true
-busybox mount -t sysfs sysfs /sys 2>/dev/null || true
-busybox mdev -s 2>/dev/null || true
-
-# Ensure DRM graphics node exists
-if [ -e /sys/class/drm/card0/dev ]; then
-    d=$(busybox cat /sys/class/drm/card0/dev)
-    busybox rm -f /dev/dri/card0
-    busybox mknod -m 666 /dev/dri/card0 c "${d%:*}" "${d#*:}" 2>/dev/null || true
-fi
-
-# Start drmstep bootsplash on screen (replaces frozen Samsung logo)
-if ! busybox pidof drmstep-fb2 >/dev/null 2>&1; then
-    for d in /opt/kmsbin/drmstep-fb2 /root/drmstep-fb2 /tmp/drmstep-fb2; do
-        if [ -x "$d" ]; then
-            busybox setsid "$d" >> /root/drmstep.log 2>&1 &
-            break
-        fi
-    done
-fi
-
-# Save boot diagnostics
-busybox dmesg > /root/dmesg.txt 2>/dev/null || true
-
-# Deploy custom Wi-Fi config if present
-if [ -f /root/wpa_supplicant.conf ] && [ ! -f /etc/wpa_supplicant.conf ]; then
-    busybox cp -f /root/wpa_supplicant.conf /etc/wpa_supplicant.conf 2>/dev/null || true
-fi
-
-# Run hardware bringup in background
-if [ -x /root/hw-up.sh ]; then
-    busybox sh /root/hw-up.sh </dev/null >> /root/hw-up.log 2>&1 &
-fi
-
-# Shell on tablet screen console
-busybox setsid sh -c 'trap "" HUP INT QUIT TSTP TTIN TTOU
-while true; do
-    echo "" > /dev/tty1
-    echo "==========================================================" > /dev/tty1
-    echo "  Debian 12 (bookworm) - Samsung Galaxy Tab A8 LTE (X205)  " > /dev/tty1
-    echo "==========================================================" > /dev/tty1
-    echo "Type commands here or connect via USB serial (ttyGS0)." > /dev/tty1
-    busybox sh <>/dev/tty1 >&0 2>&0
-    busybox sleep 1
-done' </dev/null >/dev/null 2>&1 &
-
-# Serial shell on USB ACM
-busybox setsid sh -c 'trap "" HUP INT QUIT TSTP TTIN TTOU
-while true; do
-    echo "gta8lte debian prompt" > /dev/ttyGS0
-    busybox sh <>/dev/ttyGS0 >&0 2>&0
-    busybox sleep 1
-done' </dev/null >/dev/null 2>&1 &
-
-while true; do
-    echo V > /dev/watchdog 2>/dev/null || true
-    busybox sleep 5
-done
-DEBEOF
-chmod 755 ramdisk_root/debian-init
-
-cat > ramdisk_root/init << 'EOF'
-#!/bin/busybox sh
-export PATH=/bin:/sbin:/usr/bin:/usr/sbin
-BUSYBOX=/bin/busybox
-trap '' HUP INT QUIT TSTP TTIN TTOU
-
-# Essential filesystems
-$BUSYBOX mkdir -p /proc /sys /dev /tmp /run /mnt/root /config /modules
-$BUSYBOX mount -t proc proc /proc 2>/dev/null || true
-$BUSYBOX mount -t sysfs sysfs /sys 2>/dev/null || true
-$BUSYBOX mount -t tmpfs tmpfs /dev 2>/dev/null || true
-
-# Essential device nodes in /dev
-$BUSYBOX mknod -m 600 /dev/console c 5 1 2>/dev/null || true
-$BUSYBOX mknod -m 666 /dev/tty c 5 0 2>/dev/null || true
-$BUSYBOX mknod -m 666 /dev/tty0 c 4 0 2>/dev/null || true
-$BUSYBOX mknod -m 666 /dev/tty1 c 4 1 2>/dev/null || true
-$BUSYBOX mknod -m 666 /dev/null c 1 3 2>/dev/null || true
-$BUSYBOX mknod -m 666 /dev/zero c 1 5 2>/dev/null || true
-$BUSYBOX mknod -m 600 /dev/kmsg c 1 11 2>/dev/null || true
-$BUSYBOX mdev -s 2>/dev/null || true
-
-log() {
-    echo "gta8-init: $*" > /dev/kmsg 2>/dev/null || true
-    echo "gta8-init: $*" > /dev/tty0 2>/dev/null || true
-    echo "gta8-init: $*" 2>/dev/null || true
-}
-
-log "=== Kernel booted successfully! Starting initramfs ==="
-
-# 1. Neutralize hardware watchdogs immediately
-echo "watchdog rstoff" > /proc/mdbg/at_cmd 2>/dev/null || true
-for ko in /pmicwdt_off.ko /modules/pmicwdt_off.ko; do
-    if [ -f "$ko" ]; then
-        $BUSYBOX insmod "$ko" 2>/dev/null && log "SC2730 PMIC watchdog neutralized via $ko" && break
-    fi
-done
-
-for w in /sys/class/watchdog/watchdog*; do
-    [ -e "$w/dev" ] || continue
-    wdev=$($BUSYBOX cat "$w/dev")
-    wname=${w##*/}
-    $BUSYBOX mknod -m 600 "/dev/$wname" c "${wdev%:*}" "${wdev#*:}" 2>/dev/null || true
-done
-$BUSYBOX mknod -m 666 /dev/watchdog c 10 130 2>/dev/null || true
-
-# Background keepalive loop
-$BUSYBOX sh -c 'trap "" HUP INT QUIT
-while true; do
-    for n in /dev/watchdog /dev/watchdog0 /dev/watchdog1; do
-        [ -c "$n" ] && echo 1 > "$n" 2>/dev/null || true
-        [ -c "$n" ] && echo V > "$n" 2>/dev/null || true
-    done
-    echo "watchdog rstoff" > /proc/mdbg/at_cmd 2>/dev/null || true
-    $BUSYBOX sleep 4
-done' </dev/null >/dev/null 2>&1 &
-
-# 2. Setup USB ACM gadget (optional, ignore errors)
-$BUSYBOX mount -t configfs none /config 2>/dev/null || true
-G=/config/usb_gadget/g1
-if [ -d /config/usb_gadget ]; then
-    $BUSYBOX mkdir -p "$G/strings/0x409" "$G/functions/acm.gs0" "$G/configs/b.1/strings/0x409" 2>/dev/null || true
-    echo 0x1d6b > "$G/idVendor" 2>/dev/null || true
-    echo 0x0104 > "$G/idProduct" 2>/dev/null || true
-    echo "Galaxy Tab A8 LTE" > "$G/strings/0x409/product" 2>/dev/null || true
-    $BUSYBOX ln -sfn "$G/functions/acm.gs0" "$G/configs/b.1/f1" 2>/dev/null || true
-    echo musb-hdrc.0.auto > "$G/UDC" 2>/dev/null || true
-fi
-$BUSYBOX mknod -m 600 /dev/ttyGS0 c 509 0 2>/dev/null || true
-
-# DRM node creation and early bootsplash
-if [ -e /sys/class/drm/card0/dev ]; then
-    d=$($BUSYBOX cat /sys/class/drm/card0/dev)
-    $BUSYBOX mkdir -p /dev/dri
-    $BUSYBOX rm -f /dev/dri/card0
-    $BUSYBOX mknod -m 666 /dev/dri/card0 c "${d%:*}" "${d#*:}" 2>/dev/null || true
-fi
-if [ -x /opt/kmsbin/drmstep-fb2 ]; then
-    /opt/kmsbin/drmstep-fb2 </dev/null >/dev/null 2>&1 &
-fi
-
-# Function to perform switch_root into Debian
-do_switch() {
-    log "Preparing Debian rootfs on $1..."
-
-    # Ensure /bin/busybox and /bin/sh exist on target root!
-    $BUSYBOX mkdir -p /mnt/root/bin /mnt/root/sbin /mnt/root/usr/bin /mnt/root/usr/sbin
-    $BUSYBOX cp -f /bin/busybox /mnt/root/bin/busybox 2>/dev/null || true
-    $BUSYBOX chmod 755 /mnt/root/bin/busybox 2>/dev/null || true
-    [ -e /mnt/root/bin/sh ] || $BUSYBOX ln -sf /bin/busybox /mnt/root/bin/sh 2>/dev/null || true
-
-    # Install debian-init as /sbin/init
-    $BUSYBOX cp -f /debian-init /mnt/root/sbin/init 2>/dev/null || true
-    $BUSYBOX chmod 755 /mnt/root/sbin/init 2>/dev/null || true
-
-    # Deploy tools and modules to /root
-    $BUSYBOX mkdir -p /mnt/root/root /mnt/root/root/modules /mnt/root/etc/udev/rules.d /mnt/root/etc/dpkg/dpkg.cfg.d /mnt/root/opt/kmsbin
-    echo 'path-exclude=/sbin/init' > /mnt/root/etc/dpkg/dpkg.cfg.d/protect-sbin-init 2>/dev/null || true
-    if [ -f /tools.tar.gz ]; then
-        $BUSYBOX tar -xzf /tools.tar.gz -C /mnt/root/root/ 2>/dev/null || true
-        $BUSYBOX cp -f /mnt/root/root/udev/*.rules /mnt/root/etc/udev/rules.d/ 2>/dev/null || true
-        $BUSYBOX chmod +x /mnt/root/root/*.sh /mnt/root/root/*.py 2>/dev/null || true
-    fi
-    if [ -d /modules ]; then
-        $BUSYBOX cp -rf /modules/* /mnt/root/root/modules/ 2>/dev/null || true
-    fi
-    if [ -d /opt/kmsbin ]; then
-        $BUSYBOX cp -rf /opt/kmsbin/* /mnt/root/opt/kmsbin/ 2>/dev/null || true
-    fi
-
-    # Bind mounts
-    $BUSYBOX mkdir -p /mnt/root/proc /mnt/root/sys /mnt/root/dev /mnt/root/dev/pts /mnt/root/run /mnt/root/config
-    $BUSYBOX mount -o bind /proc /mnt/root/proc 2>/dev/null || true
-    $BUSYBOX mount -o bind /sys /mnt/root/sys 2>/dev/null || true
-    $BUSYBOX mount -o bind /dev /mnt/root/dev 2>/dev/null || true
-
-    log "Executing switch_root to Debian..."
-    exec $BUSYBOX switch_root /mnt/root /sbin/init
-}
-
-# 3. Search for MicroSD root partition
-log "Scanning for MicroSD card partitions..."
-for i in $($BUSYBOX seq 1 30); do
-    $BUSYBOX mdev -s 2>/dev/null || true
-    for p in /sys/class/block/mmcblk1p* /sys/class/block/mmcblk0p*; do
-        [ -e "$p/dev" ] || continue
-        pdev=$($BUSYBOX cat "$p/dev")
-        pname=${p##*/}
-        $BUSYBOX mknod -m 660 "/dev/$pname" b "${pdev%:*}" "${pdev#*:}" 2>/dev/null || true
-    done
-
-    # Probe mmcblk1 partitions (microSD)
-    for p in /dev/mmcblk1p1 /dev/mmcblk1p2 /dev/mmcblk1p*; do
-        [ -b "$p" ] || continue
-        if $BUSYBOX mount -t ext4 "$p" /mnt/root 2>/dev/null || $BUSYBOX mount "$p" /mnt/root 2>/dev/null; then
-            if [ -d /mnt/root/etc ] || [ -d /mnt/root/bin ] || [ -d /mnt/root/usr ]; then
-                log "Found Debian on $p!"
-                do_switch "$p"
-            fi
-            $BUSYBOX umount /mnt/root 2>/dev/null || true
-        fi
-    done
-    $BUSYBOX sleep 1
-done
-
-log "FAIL: Could not find Debian rootfs on microSD."
-log "Entering keepalive rescue loop (PID 1 will not exit)..."
-
-# Spawns a background shell on serial ACM if connected
-$BUSYBOX setsid sh -c 'while true; do
-    echo "gta8lte rescue shell" > /dev/ttyGS0 2>/dev/null
-    $BUSYBOX sh <>/dev/ttyGS0 >&0 2>&0
-    $BUSYBOX sleep 1
-done' </dev/null >/dev/null 2>&1 &
-
-# Keep PID 1 alive FOREVER so the kernel never panics!
-while true; do
-    for n in /dev/watchdog /dev/watchdog0 /dev/watchdog1; do
-        [ -c "$n" ] && echo 1 > "$n" 2>/dev/null || true
-        [ -c "$n" ] && echo V > "$n" 2>/dev/null || true
-    done
-    echo "watchdog rstoff" > /proc/mdbg/at_cmd 2>/dev/null || true
-    $BUSYBOX sleep 5
-done
-EOF
-chmod 755 ramdisk_root/init
-
-(cd ramdisk_root && find . | cpio -H newc -o) | gzip -9 > boot-pack/ramdisk.cpio.gz
+chmod +x tools/busybox-arm64 tools/build-ramdisk.sh
+./tools/build-ramdisk.sh
 
 echo "=== 7. Assembling Boot Pack Artifacts ==="
 cp kernel/arch/arm64/boot/Image boot-pack/Image-v57

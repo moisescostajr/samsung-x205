@@ -1,0 +1,9 @@
+# Rename this file to wpa_supplicant.conf and fill in your network.
+# gta8-hw.service reads it from the GTA8CFG partition at boot.
+ctrl_interface=DIR=/var/run/wpa_supplicant GROUP=netdev
+update_config=1
+
+network={
+    ssid="YOUR_WIFI_NAME"
+    psk="YOUR_WIFI_PASSWORD"
+}

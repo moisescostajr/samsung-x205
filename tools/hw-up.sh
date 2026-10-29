@@ -235,7 +235,7 @@ if [ -e /sys/class/net/wlan0 ]; then
     if command -v dropbear >/dev/null 2>&1; then
         mkdir -p /etc/dropbear
         [ -f /etc/dropbear/dropbear_rsa_host_key ] || dropbearkey -t rsa -f /etc/dropbear/dropbear_rsa_host_key >/dev/null 2>&1
-        dropbear -E -p 22 >/tmp/dropbear.log 2>&1 &
+        dropbear -E -B -R -p 22 >/tmp/dropbear.log 2>&1 &
         log dropbear_ok
     fi
 else

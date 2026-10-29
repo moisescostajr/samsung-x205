@@ -1,0 +1,26 @@
+#!/bin/busybox sh
+# Default udhcpc script for gta8
+[ -z "$1" ] && exit 1
+case "$1" in
+    deconfig)
+        ip addr flush dev "$interface" 2>/dev/null
+        ;;
+    renew|bound)
+        ip addr add "$ip/${subnet:-24}" dev "$interface" 2>/dev/null || ip addr add "$ip/24" dev "$interface" 2>/dev/null
+        if [ -n "$router" ]; then
+            ip route add default via "${router%% *}" dev "$interface" 2>/dev/null || ip route replace default via "${router%% *}" dev "$interface" 2>/dev/null
+        fi
+        rm -f /etc/resolv.conf 2>/dev/null
+        {
+            if [ -n "$dns" ]; then
+                for ns in $dns; do
+                    echo "nameserver $ns"
+                done
+            else
+                echo "nameserver 8.8.8.8"
+                echo "nameserver 1.1.1.1"
+            fi
+        } > /etc/resolv.conf 2>/dev/null || true
+        ;;
+esac
+exit 0

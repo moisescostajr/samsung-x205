@@ -97,16 +97,23 @@ if [ "$HAS_COMPOSITOR" -eq 0 ]; then
     exit 0
 fi
 
+# Disable DPU writeback engine (prevents hardware from wiping scanout layers after 4 vsyncs)
+echo 0 > /sys/module/dpu_r4p0/parameters/max_vsync_count 2>/dev/null || true
+echo 1 > /sys/class/display/dispc0/refresh 2>/dev/null || true
+
 for p in $(busybox pidof phoc) $(busybox pidof phosh) $(busybox pidof wayfire) \
          $(busybox pidof waybar) $(busybox pidof wofi) $(busybox pidof squeekboard) \
-         $(busybox pidof Xwayland) $(busybox pidof drmstep-fb2); do
+         $(busybox pidof Xwayland) $(busybox pidof drmstep-fb2) \
+         $(busybox pidof test_hold_color) $(busybox pidof test_scanout) \
+         $(busybox pidof test_scanout_loop) $(busybox pidof palette_test); do
     kill "$p" 2>/dev/null
 done
 busybox sleep 1
-busybox sleep 3
 for p in $(busybox pidof phoc) $(busybox pidof phosh) $(busybox pidof wayfire) \
          $(busybox pidof waybar) $(busybox pidof wofi) $(busybox pidof squeekboard) \
-         $(busybox pidof Xwayland) $(busybox pidof drmstep-fb2); do
+         $(busybox pidof Xwayland) $(busybox pidof drmstep-fb2) \
+         $(busybox pidof test_hold_color) $(busybox pidof test_scanout) \
+         $(busybox pidof test_scanout_loop) $(busybox pidof palette_test); do
     kill -9 "$p" 2>/dev/null
 done
 busybox sleep 2

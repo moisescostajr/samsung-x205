@@ -5,13 +5,28 @@ on:
   push:
     branches:
       - main
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+
+concurrency:
+  group: gta8-image
+  cancel-in-progress: false
 
 jobs:
   build:
     runs-on: ubuntu-22.04
+    timeout-minutes: 180
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /opt/hostedtoolcache/CodeQL /usr/local/share/boost || true
+          sudo apt-get clean
+          df -h /
 
       - name: Install dependencies
         env:
@@ -33,3 +48,92 @@ jobs:
         with:
           name: gta8-boot-pack
           path: boot-pack/
+          retention-days: 7
+
+  rootfs:
+    needs: build
+    runs-on: ubuntu-22.04
+    timeout-minutes: 300
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /opt/hostedtoolcache/CodeQL /usr/local/share/boost || true
+          sudo apt-get clean
+          df -h /
+
+      - name: Download kernel boot pack
+        uses: actions/download-artifact@v4
+        with:
+          name: gta8-boot-pack
+          path: boot-pack
+
+      - name: Install rootfs dependencies
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y --no-install-recommends \
+            mmdebstrap qemu-user-static binfmt-support debian-archive-keyring \
+            e2fsprogs dosfstools parted gdisk xz-utils rsync ca-certificates
+
+      - name: Enable arm64 binfmt
+        run: |
+          if [ ! -e /proc/sys/fs/binfmt_misc/qemu-aarch64 ]; then
+            sudo update-binfmts --enable qemu-aarch64
+          fi
+          ls -l /proc/sys/fs/binfmt_misc/qemu-aarch64
+
+      - name: Build Debian + Phosh image
+        run: |
+          chmod +x tools/build-rootfs.sh tools/rootfs-configure.sh tools/gta8-bringup.sh
+          sudo -E ./tools/build-rootfs.sh
+
+      - name: Assemble boot pack tarball
+        run: |
+          cd boot-pack
+          tar -czf ../rootfs/release/gta8-boot-pack.tar.gz \
+            Image-v57 ramdisk.cpio.gz modules propstub.so extract.so \
+            drmstep-fb2 splash.bgra 2>/dev/null || \
+          tar -czf ../rootfs/release/gta8-boot-pack.tar.gz \
+            Image-v57 ramdisk.cpio.gz modules
+          cd ..
+          ( cd rootfs/release && sha256sum gta8-boot-pack.tar.gz >> SHA256SUMS )
+          ls -lh rootfs/release
+
+      - name: Verify release files
+        run: |
+          cat rootfs/release/manifest.txt
+          ( cd rootfs/release && sha256sum -c SHA256SUMS )
+          parted -s rootfs/disk.raw unit MiB print
+
+      - name: Publish release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG=image-latest
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release view "$TAG" --json assets --jq '.assets[].name' |
+              while IFS= read -r name; do
+                [ -n "$name" ] && gh release delete-asset "$TAG" "$name" -y
+              done
+          else
+            gh release create "$TAG" \
+              --title "GTA8 Debian 12 + Phosh image" \
+              --notes "Rolling image and boot pack for the Samsung Galaxy Tab A8 LTE (SM-X205). Built from ${GITHUB_SHA}."
+          fi
+          gh release upload "$TAG" rootfs/release/* --clobber
+
+      - name: Upload release files as workflow artifact
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: gta8-rootfs-release
+          path: rootfs/release/
+          retention-days: 14
