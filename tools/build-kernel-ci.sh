@@ -306,14 +306,21 @@ fi
 
 # Recreate relative symlink for libdrm.so in extracted tree
 LIBDIR="$(pwd)/libdrm_temp/root/usr/lib/aarch64-linux-gnu"
-if [ "$drm_ok" = 1 ] && [ -f libdrm_temp/root/usr/include/libdrm/xf86drm.h ] && [ -d "$LIBDIR" ]; then
+if [ "$drm_ok" = 1 ] && [ -f libdrm_temp/root/usr/include/xf86drm.h ] && [ -d "$LIBDIR" ]; then
     (cd "$LIBDIR" && ln -sf libdrm.so.2.4.0 libdrm.so && ln -sf libdrm.so.2.4.0 libdrm.so.2)
-    aarch64-linux-gnu-gcc -O2 -Wall tools/drmstep.c \
-        -Ilibdrm_temp/root/usr/include/libdrm \
-        -Llibdrm_temp/root/usr/lib/aarch64-linux-gnu \
-        -ldrm -Wl,-rpath,/lib:/usr/lib \
-        -o boot-pack/drmstep-fb2 && echo "[OK] built drmstep-fb2" ||
+    # Static first: the initramfs has no glibc, only busybox and libdrm.
+    if aarch64-linux-gnu-gcc -static -O2 -Wall tools/drmstep.c \
+        -Ilibdrm_temp/root/usr/include -Ilibdrm_temp/root/usr/include/libdrm \
+        -L"$LIBDIR" -ldrm -o boot-pack/drmstep-fb2; then
+        echo "[OK] built static drmstep-fb2"
+    elif aarch64-linux-gnu-gcc -O2 -Wall tools/drmstep.c \
+        -Ilibdrm_temp/root/usr/include -Ilibdrm_temp/root/usr/include/libdrm \
+        -L"$LIBDIR" -ldrm -Wl,-rpath,/lib:/usr/lib \
+        -o boot-pack/drmstep-fb2; then
+        echo "[OK] built dynamic drmstep-fb2"
+    else
         echo "[WARN] drmstep-fb2 build failed (splash disabled, boot continues)" >&2
+    fi
 else
     echo "[WARN] libdrm aarch64 headers/libs unavailable; skipping drmstep-fb2" >&2
 fi

@@ -289,4 +289,21 @@ PasswordAuthentication yes
 PermitRootLogin no
 EOF
 
+# ------------------------------------------------------------------- checks
+# Fail the image build here instead of shipping a card that cannot start Phosh.
+missing=0
+for b in phosh phoc squeekboard nmcli ModemManager chvt; do
+    command -v "$b" >/dev/null 2>&1 || { log "ERROR: missing binary: $b"; missing=1; }
+done
+for f in /etc/systemd/system/gta8-hw.service \
+         /etc/systemd/system/phosh.service.d/10-gta8.conf \
+         /etc/phosh/phoc.ini /usr/local/sbin/gta8-bringup.sh; do
+    [ -e "$f" ] || { log "ERROR: missing file: $f"; missing=1; }
+done
+for s in phosh.service gta8-hw.service NetworkManager.service ModemManager.service; do
+    systemctl is-enabled "$s" >/dev/null 2>&1 || {
+        log "ERROR: service not enabled: $s"; missing=1; }
+done
+[ "$missing" = 0 ] || exit 1
+
 log "configuration complete"
