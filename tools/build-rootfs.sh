@@ -298,6 +298,14 @@ split -b 1800M -d -a 2 "$XZ" "$RELEASE/gta8-rootfs.img.xz.part."
 # The split parts are the release payload; the monolith is not needed.
 rm -f "$XZ"
 
+# build-rootfs.sh runs under sudo, but later CI steps (boot-pack tarball,
+# release upload) run as the invoking user. Hand the outputs back so those
+# steps can write into rootfs/release/.
+if [ -n "${SUDO_UID:-}" ] && [ "${SUDO_UID}" != 0 ]; then
+    chown -R "${SUDO_UID}:${SUDO_GID:-$SUDO_UID}" "$RELEASE" 2>/dev/null || true
+    chown "${SUDO_UID}:${SUDO_GID:-$SUDO_UID}" "$DISK" 2>/dev/null || true
+fi
+
 log "release assets:"
 ls -lh "$RELEASE"
 log "done; write $OUT/disk.raw to the microSD with tools/write-sdcard.sh"
