@@ -20,6 +20,7 @@ import lzma
 import os
 import re
 import shutil
+import ssl
 import subprocess
 import sys
 import tarfile
@@ -77,6 +78,29 @@ def github_token() -> str | None:
     return None
 
 
+def tls_context() -> ssl.SSLContext:
+    """Return a context with a CA bundle Python can actually find.
+
+    The python.org macOS build does not ship a trust store, so plain
+    urlopen() fails with CERTIFICATE_VERIFY_FAILED even though curl works.
+    macOS keeps the system roots in /etc/ssl/cert.pem.
+    """
+    for cafile in (os.environ.get("SSL_CERT_FILE"), "/etc/ssl/cert.pem"):
+        if cafile and Path(cafile).is_file():
+            try:
+                return ssl.create_default_context(cafile=cafile)
+            except ssl.SSLError:
+                continue
+    try:
+        import certifi  # type: ignore
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        return ssl.create_default_context()
+
+
+SSL_CONTEXT = tls_context()
+
+
 def api_get(url: str, token: str | None) -> dict:
     headers = {
         "Accept": "application/vnd.github+json",
@@ -85,7 +109,7 @@ def api_get(url: str, token: str | None) -> dict:
     if token:
         headers["Authorization"] = f"Bearer {token}"
     req = urllib.request.Request(url, headers=headers)
-    with urllib.request.urlopen(req, timeout=60) as resp:
+    with urllib.request.urlopen(req, timeout=60, context=SSL_CONTEXT) as resp:
         return json.loads(resp.read().decode())
 
 
@@ -97,7 +121,7 @@ def open_asset(url: str, token: str | None):
     if token and "api.github.com" in url:
         headers["Authorization"] = f"Bearer {token}"
     req = urllib.request.Request(url, headers=headers)
-    return urllib.request.urlopen(req, timeout=120)
+    return urllib.request.urlopen(req, timeout=120, context=SSL_CONTEXT)
 
 
 def download(url: str, dest: Path, token: str | None, what: str) -> None:
