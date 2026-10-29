@@ -79,7 +79,7 @@ jobs:
         run: |
           sudo apt-get update -y
           sudo apt-get install -y --no-install-recommends \
-            mmdebstrap qemu-user-static binfmt-support debian-archive-keyring \
+            mmdebstrap qemu-user-static binfmt-support debian-archive-keyring arch-test \
             e2fsprogs dosfstools parted gdisk xz-utils rsync ca-certificates
 
       - name: Enable arm64 binfmt
