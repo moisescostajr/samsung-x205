@@ -144,8 +144,8 @@ ensure_wifi_profile() {
     done
     [ -n "$conf" ] || { log "no wpa_supplicant.conf"; return 0; }
 
-    WIFI_SSID=$(sed -n 's/^[[:space:]]*ssid="\(.*\)"[[:space:]]*$/\1/p' "$conf" | head -1)
-    psk=$(sed -n 's/^[[:space:]]*psk="\(.*\)"[[:space:]]*$/\1/p' "$conf" | head -1)
+    WIFI_SSID=$(sed -n 's/^[[:space:]]*ssid[[:space:]]*=[[:space:]]*"\(.*\)"[[:space:]]*$/\1/p' "$conf" | head -1)
+    psk=$(sed -n 's/^[[:space:]]*psk[[:space:]]*=[[:space:]]*"\(.*\)"[[:space:]]*$/\1/p' "$conf" | head -1)
     [ -n "$WIFI_SSID" ] || { log "wpa_supplicant.conf has no ssid"; return 0; }
 
     cp -f "$conf" /etc/wpa_supplicant.conf 2>/dev/null || true

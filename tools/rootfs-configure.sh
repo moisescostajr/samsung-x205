@@ -82,8 +82,8 @@ fi
 
 # Wi-Fi profile, when the tree used for the build had the (gitignored) file.
 if [ -f /root/wpa_supplicant.conf ] && command -v nmcli >/dev/null 2>&1; then
-    ssid=$(sed -n 's/^[[:space:]]*ssid="\(.*\)"[[:space:]]*$/\1/p' /root/wpa_supplicant.conf | head -1)
-    psk=$(sed -n 's/^[[:space:]]*psk="\(.*\)"[[:space:]]*$/\1/p' /root/wpa_supplicant.conf | head -1)
+    ssid=$(sed -n 's/^[[:space:]]*ssid[[:space:]]*=[[:space:]]*"\(.*\)"[[:space:]]*$/\1/p' /root/wpa_supplicant.conf | head -1)
+    psk=$(sed -n 's/^[[:space:]]*psk[[:space:]]*=[[:space:]]*"\(.*\)"[[:space:]]*$/\1/p' /root/wpa_supplicant.conf | head -1)
     if [ -n "$ssid" ]; then
         mkdir -p /etc/NetworkManager/system-connections
         f="/etc/NetworkManager/system-connections/${ssid//\//_}.nmconnection"
