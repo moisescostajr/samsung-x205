@@ -130,7 +130,18 @@ mm_args=(
     --aptopt='Apt::Install-Recommends "true"'
     --include="$PACKAGE_LIST"
 )
-[ -n "$KEYRING" ] && mm_args+=(--keyring="$KEYRING")
+if [ -n "$KEYRING" ]; then
+    [ -r "$KEYRING" ] || die "cannot read archive keyring: $KEYRING"
+    # apt uses the host keyrings for the first update and resolves Dir::Etc
+    # relative to the target root, so install the keyring in all three places:
+    # the host's global trust store, the path mmdebstrap guesses for signed-by,
+    # and the chroot itself (via a setup hook, since the target must start
+    # empty).
+    install -D -m 644 "$KEYRING" /etc/apt/trusted.gpg.d/debian-archive-keyring.gpg
+    install -D -m 644 "$KEYRING" /usr/share/keyrings/debian-archive-keyring.gpg
+    mm_args+=(--setup-hook="install -D -m 644 '$KEYRING' \"\$1/etc/apt/trusted.gpg.d/debian-archive-keyring.gpg\"")
+    log "using archive keyring: $KEYRING"
+fi
 mmdebstrap "${mm_args[@]}" "$SUITE" "$ROOTDIR" "$MIRROR"
 
 # ---------------------------------------------------------------------- stage
