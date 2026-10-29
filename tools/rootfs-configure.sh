@@ -292,11 +292,13 @@ EOF
 # ------------------------------------------------------------------- checks
 # Fail the image build here instead of shipping a card that cannot start Phosh.
 missing=0
-for b in phosh phoc squeekboard nmcli ModemManager chvt; do
+for b in phosh-session phoc squeekboard nmcli ModemManager chvt gnome-session; do
     command -v "$b" >/dev/null 2>&1 || { log "ERROR: missing binary: $b"; missing=1; }
 done
 for f in /etc/systemd/system/gta8-hw.service \
          /etc/systemd/system/phosh.service.d/10-gta8.conf \
+         /usr/libexec/phosh \
+         /usr/share/gnome-session/sessions/phosh.session \
          /etc/phosh/phoc.ini /usr/local/sbin/gta8-bringup.sh; do
     [ -e "$f" ] || { log "ERROR: missing file: $f"; missing=1; }
 done

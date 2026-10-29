@@ -149,6 +149,8 @@ ensure_wifi_profile() {
     [ -n "$WIFI_SSID" ] || { log "wpa_supplicant.conf has no ssid"; return 0; }
 
     cp -f "$conf" /etc/wpa_supplicant.conf 2>/dev/null || true
+    # Files edited on Windows arrive with CRLF; wpa_supplicant rejects them.
+    sed -i 's/\r$//' /etc/wpa_supplicant.conf 2>/dev/null || true
     if nmcli -t -f NAME connection show 2>/dev/null | grep -Fxq "$WIFI_SSID"; then
         # Keep the profile in sync when the file on GTA8CFG changes.
         if [ -n "$psk" ]; then
