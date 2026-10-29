@@ -29,6 +29,10 @@ SUITE="${GTA8_ROOTFS_SUITE:-bookworm}"
 ARCH=arm64
 IMAGE_SIZE="${GTA8_IMAGE_SIZE:-6G}"
 MIRROR="${GTA8_MIRROR:-http://deb.debian.org/debian}"
+# Optional explicit Debian archive keyring. Ubuntu's debian-archive-keyring is
+# usually too old to know the bookworm release keys, so CI downloads the one
+# from Debian and points mmdebstrap at it.
+KEYRING="${GTA8_KEYRING:-}"
 
 WORK="${GTA8_WORK:-$OUT/build}"
 ROOTDIR="$WORK/root"
@@ -117,15 +121,17 @@ PACKAGE_LIST="$(echo $PACKAGES | tr ' ' ',')"
 
 # ------------------------------------------------------------------ bootstrap
 log "bootstrapping Debian $SUITE/$ARCH (this takes a while)"
-mmdebstrap \
-    --arch="$ARCH" \
-    --variant=apt \
-    --components=main \
-    --aptopt='Acquire::Retries "5"' \
-    --aptopt='Acquire::http::Timeout "60"' \
-    --aptopt='Apt::Install-Recommends "true"' \
-    --include="$PACKAGE_LIST" \
-    "$SUITE" "$ROOTDIR" "$MIRROR"
+mm_args=(
+    --arch="$ARCH"
+    --variant=apt
+    --components=main
+    --aptopt='Acquire::Retries "5"'
+    --aptopt='Acquire::http::Timeout "60"'
+    --aptopt='Apt::Install-Recommends "true"'
+    --include="$PACKAGE_LIST"
+)
+[ -n "$KEYRING" ] && mm_args+=(--keyring="$KEYRING")
+mmdebstrap "${mm_args[@]}" "$SUITE" "$ROOTDIR" "$MIRROR"
 
 # ---------------------------------------------------------------------- stage
 log "staging tools, modules and vendor helpers"

@@ -89,10 +89,18 @@ jobs:
           fi
           ls -l /proc/sys/fs/binfmt_misc/qemu-aarch64
 
+      - name: Fetch bookworm archive keyring
+        run: |
+          curl -fsSL -o /tmp/dak.deb \
+            https://deb.debian.org/debian/pool/main/d/debian-archive-keyring/debian-archive-keyring_2023.3+deb12u2_all.deb
+          dpkg-deb -x /tmp/dak.deb /tmp/dak
+          ls -l /tmp/dak/usr/share/keyrings/debian-archive-keyring.gpg
+
       - name: Build Debian + Phosh image
         run: |
           chmod +x tools/build-rootfs.sh tools/rootfs-configure.sh tools/gta8-bringup.sh
-          sudo -E ./tools/build-rootfs.sh
+          sudo -E env GTA8_KEYRING=/tmp/dak/usr/share/keyrings/debian-archive-keyring.gpg \
+            ./tools/build-rootfs.sh
 
       - name: Assemble boot pack tarball
         run: |
